@@ -38,31 +38,33 @@ class MainActivity : ComponentActivity() {
         appUpdateManager = AppUpdateManagerFactory.create(this)
         checkForAppUpdate()
 
+        val navigateTo = intent.getStringExtra("navigate_to")
+        val initialDest = if (navigateTo == "CASH_COUNT") org.sprachcafe.team.ui.NavDestination.CASH_COUNT else null
+
         setContent {
             SprachCafeTheme {
-                var hasCameraPermission by remember {
-                    mutableStateOf(
-                        ContextCompat.checkSelfPermission(
-                            this,
-                            Manifest.permission.CAMERA
-                        ) == PackageManager.PERMISSION_GRANTED
-                    )
-                }
-
+                val context = this
                 val permissionLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.RequestPermission()
-                ) { isGranted ->
-                    hasCameraPermission = isGranted
-                }
+                    contract = ActivityResultContracts.RequestMultiplePermissions()
+                ) { _ -> }
 
                 LaunchedEffect(Unit) {
-                    if (!hasCameraPermission) {
-                        permissionLauncher.launch(Manifest.permission.CAMERA)
+                    val permsToRequest = mutableListOf<String>()
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        permsToRequest.add(Manifest.permission.CAMERA)
+                    }
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                            permsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                    if (permsToRequest.isNotEmpty()) {
+                        permissionLauncher.launch(permsToRequest.toTypedArray())
                     }
                 }
 
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    MainApp()
+                    MainApp(initialDestination = initialDest)
                 }
             }
         }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -21,13 +22,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.sprachcafe.team.data.CartItem
-import org.sprachcafe.team.data.DefaultKioskData
-import org.sprachcafe.team.data.ItemCategory
-import org.sprachcafe.team.data.KioskItem
+import kotlinx.coroutines.launch
+import org.sprachcafe.team.data.*
 import org.sprachcafe.team.ui.components.BarcodeScannerView
+import org.sprachcafe.team.ui.theme.SprachCafeRed
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,19 +37,53 @@ fun KioskScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val dbHelper = remember { TeamDatabaseHelper.getInstance(context) }
+    val prefs = remember { TeamPreferences.getInstance(context) }
+
+    var itemsList by remember { mutableStateOf<List<KioskItem>>(emptyList()) }
     var selectedCategory by remember { mutableStateOf<ItemCategory?>(null) }
     var cart by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var isCartOpen by remember { mutableStateOf(false) }
     var isScannerOpen by remember { mutableStateOf(false) }
 
-    val filteredItems = remember(selectedCategory) {
-        if (selectedCategory == null) DefaultKioskData.items
-        else DefaultKioskData.items.filter { it.category == selectedCategory }
+    // Dialog States
+    var showPayoutDialog by remember { mutableStateOf(false) }
+    var payoutAmountInput by remember { mutableStateOf("") }
+    var payoutPurpose by remember { mutableStateOf("Milch / Hafermilch") }
+
+    var showDonationDialog by remember { mutableStateOf(false) }
+    var donationAmountInput by remember { mutableStateOf("") }
+    var donationPurpose by remember { mutableStateOf("Allgemeine Spende") }
+    var donorNameInput by remember { mutableStateOf("") }
+
+    var activeSession by remember { mutableStateOf<CashSession?>(null) }
+
+    fun refreshItems() {
+        itemsList = dbHelper.getAllKioskItems()
+        activeSession = dbHelper.getActiveCashSession()
+
+        // Background sync from server
+        coroutineScope.launch {
+            ApiClient.fetchArticles().onSuccess { fetched ->
+                dbHelper.saveKioskItems(fetched)
+                itemsList = dbHelper.getAllKioskItems()
+            }
+        }
     }
 
-    val totalCents = remember(cart) {
+    LaunchedEffect(Unit) {
+        refreshItems()
+    }
+
+    val filteredItems = remember(selectedCategory, itemsList) {
+        if (selectedCategory == null) itemsList
+        else itemsList.filter { it.category == selectedCategory }
+    }
+
+    val totalCents = remember(cart, itemsList) {
         cart.entries.sumOf { (id, qty) ->
-            (DefaultKioskData.items.find { it.id == id }?.priceCents ?: 0) * qty
+            (itemsList.find { it.id == id }?.priceCents ?: 0) * qty
         }
     }
     val totalItemsCount = remember(cart) { cart.values.sum() }
@@ -68,53 +104,182 @@ fun KioskScreen(
 
     fun clearCart() {
         cart = emptyMap()
+        isCartOpen = false
+    }
+
+    fun checkoutCash() {
+        if (cart.isEmpty()) return
+        val sessionId = prefs.activeSessionId ?: 1L
+
+        // Record sale transaction
+        val itemsSummary = cart.map { (id, qty) ->
+            val name = itemsList.find { it.id == id }?.name ?: id
+            "$qty x $name"
+        }.joinToString(", ")
+
+        dbHelper.addTransaction(
+            sessionId = sessionId,
+            type = TransactionType.SALE,
+            amountCents = totalCents,
+            purpose = "Café-Verkauf ($itemsSummary)",
+            itemsJson = itemsSummary
+        )
+
+        // Asynchronous background sync
+        coroutineScope.launch {
+            ApiClient.addTransaction(
+                sessionId = sessionId,
+                type = "SALE",
+                amountCents = totalCents,
+                purpose = "Café-Verkauf",
+                donorName = null,
+                itemsJson = itemsSummary
+            )
+        }
+
+        Toast.makeText(context, "✅ Barzahlung über ${String.format("%.2f €", totalCents / 100.0)} gebucht!", Toast.LENGTH_SHORT).show()
+        clearCart()
+        refreshItems()
+    }
+
+    fun bookPayout() {
+        val cleanVal = payoutAmountInput.replace(",", ".").trim()
+        val cents = ((cleanVal.toDoubleOrNull() ?: 0.0) * 100).toInt()
+        if (cents <= 0) {
+            Toast.makeText(context, "Bitte einen gültigen Betrag eingeben", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val sessionId = prefs.activeSessionId ?: 1L
+        dbHelper.addTransaction(
+            sessionId = sessionId,
+            type = TransactionType.PAYOUT,
+            amountCents = cents,
+            purpose = payoutPurpose
+        )
+
+        coroutineScope.launch {
+            ApiClient.addTransaction(
+                sessionId = sessionId,
+                type = "PAYOUT",
+                amountCents = cents,
+                purpose = payoutPurpose,
+                donorName = null,
+                itemsJson = null
+            )
+        }
+
+        Toast.makeText(context, "Barauszahlung von ${String.format("%.2f €", cents / 100.0)} gebucht.", Toast.LENGTH_SHORT).show()
+        showPayoutDialog = false
+        payoutAmountInput = ""
+        refreshItems()
+    }
+
+    fun bookDonation() {
+        val cleanVal = donationAmountInput.replace(",", ".").trim()
+        val cents = ((cleanVal.toDoubleOrNull() ?: 0.0) * 100).toInt()
+        if (cents <= 0) {
+            Toast.makeText(context, "Bitte einen Betrag eingeben", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val sessionId = prefs.activeSessionId ?: 1L
+        dbHelper.addTransaction(
+            sessionId = sessionId,
+            type = TransactionType.DONATION,
+            amountCents = cents,
+            purpose = donationPurpose,
+            donorName = donorNameInput.takeIf { it.isNotEmpty() }
+        )
+
+        coroutineScope.launch {
+            ApiClient.addTransaction(
+                sessionId = sessionId,
+                type = "DONATION",
+                amountCents = cents,
+                purpose = donationPurpose,
+                donorName = donorNameInput.takeIf { it.isNotEmpty() },
+                itemsJson = null
+            )
+        }
+
+        Toast.makeText(context, "💛 Spende von ${String.format("%.2f €", cents / 100.0)} erfasst. Herzlichen Dank!", Toast.LENGTH_SHORT).show()
+        showDonationDialog = false
+        donationAmountInput = ""
+        donorNameInput = ""
+        refreshItems()
     }
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFFF9F7F4))) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Header
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header Bar
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.White)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
                     Text(
-                        text = "☕ Kiosk & Café Kasse",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF1F2937)
+                        text = "Kasse & Theke",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = SprachCafeRed
                     )
                     Text(
-                        text = "SprachCafé Pankow • 18 Artikel",
+                        text = if (prefs.isCashActive) "Kasse aktiv • Helfer: ${prefs.memberName ?: "--"}" else "Schicht ohne Kasse",
                         fontSize = 12.sp,
-                        color = Color(0xFF6B7280)
+                        color = if (prefs.isCashActive) Color(0xFF059669) else Color(0xFF6B7280)
                     )
                 }
 
-                IconButton(
-                    onClick = { isScannerOpen = true },
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF8B1E2D))
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.QrCodeScanner,
-                        contentDescription = "Barcode scannen",
-                        tint = Color.White
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Spende Button
+                    OutlinedButton(
+                        onClick = { showDonationDialog = true },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB45309)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text("💛 Spende", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // Entnahme Button
+                    OutlinedButton(
+                        onClick = { showPayoutDialog = true },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text("📤 Entnahme", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // Barcode Scanner Button
+                    IconButton(
+                        onClick = { isScannerOpen = true },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = "Scanner",
+                            tint = SprachCafeRed,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 
             // Category Filter Chips
             LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp, horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 item {
                     FilterChip(
@@ -132,63 +297,52 @@ fun KioskScreen(
                 }
             }
 
-            // Product Cards Grid
+            // Product Grid
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 80.dp)
+                modifier = Modifier.weight(1f)
             ) {
                 items(filteredItems) { item ->
-                    val quantityInCart = cart[item.id] ?: 0
-
+                    val inCart = cart[item.id] ?: 0
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { addToCart(item.id) },
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (quantityInCart > 0) Color(0xFFFAF5EB) else Color.White
-                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp)
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Top
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = item.icon,
-                                    fontSize = 28.sp
-                                )
-
-                                if (quantityInCart > 0) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(26.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF8B1E2D)),
-                                        contentAlignment = Alignment.Center
+                                Text(text = item.icon, fontSize = 24.sp)
+                                if (inCart > 0) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = SprachCafeRed,
+                                        modifier = Modifier.size(22.dp)
                                     ) {
-                                        Text(
-                                            text = "$quantityInCart",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 12.sp
-                                        )
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = inCart.toString(),
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
                             }
-
-                            Spacer(modifier = Modifier.height(8.dp))
 
                             Text(
                                 text = item.name,
@@ -198,14 +352,6 @@ fun KioskScreen(
                                 color = Color(0xFF1F2937)
                             )
 
-                            Text(
-                                text = item.unit,
-                                fontSize = 11.sp,
-                                color = Color(0xFF9CA3AF)
-                            )
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -213,123 +359,122 @@ fun KioskScreen(
                             ) {
                                 Text(
                                     text = item.priceEurFormatted,
-                                    fontWeight = FontWeight.ExtraBold,
                                     fontSize = 15.sp,
-                                    color = Color(0xFF8B1E2D)
+                                    fontWeight = FontWeight.Bold,
+                                    color = SprachCafeRed
                                 )
-
-                                IconButton(
-                                    onClick = { addToCart(item.id) },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.AddCircle,
-                                        contentDescription = "Hinzufügen",
-                                        tint = Color(0xFF8B1E2D)
-                                    )
-                                }
+                                Text(
+                                    text = item.unit,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF9CA3AF)
+                                )
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Floating Cart Summary Bar
-        if (totalItemsCount > 0) {
-            Card(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .clickable { isCartOpen = true },
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF8B1E2D)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-            ) {
-                Row(
+            // Bottom Floating Cart Bar
+            if (totalItemsCount > 0) {
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { isCartOpen = true },
+                    color = SprachCafeRed,
+                    shadowElevation = 8.dp
                 ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
+                            Badge(containerColor = Color.White) {
+                                Text(
+                                    text = totalItemsCount.toString(),
+                                    color = SprachCafeRed,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                             Text(
-                                text = "$totalItemsCount",
+                                text = "Warenkorb ansehen",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
+                                fontSize = 15.sp
                             )
                         }
+
                         Text(
-                            text = "Warenkorb ansehen",
+                            text = String.format("%.2f €", totalCents / 100.0),
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
+                            fontSize = 18.sp
                         )
                     }
-
-                    Text(
-                        text = String.format("%.2f €", totalCents / 100.0),
-                        color = Color.White,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 18.sp
-                    )
                 }
             }
         }
 
-        // Cart Modal Sheet
+        // Barcode Scanner View
+        if (isScannerOpen) {
+            BarcodeScannerView(
+                onBarcodeScanned = { barcode ->
+                    val found = itemsList.find { it.barcode == barcode }
+                    if (found != null) {
+                        addToCart(found.id)
+                        Toast.makeText(context, "${found.name} hinzugefügt", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Unbekannter Barcode: $barcode", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onClose = { isScannerOpen = false }
+            )
+        }
+
+        // Cart Bottom Sheet
         if (isCartOpen) {
             ModalBottomSheet(
-                onDismissRequest = { isCartOpen = false }
+                onDismissRequest = { isCartOpen = false },
+                containerColor = Color.White
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp)
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text(
-                        text = "🛒 Aktueller Verkauf",
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 20.sp,
-                        color = Color(0xFF1F2937)
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Aktuelle Bestellung ($totalItemsCount Artikel)",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        TextButton(onClick = { clearCart() }) {
+                            Text("Leeren", color = Color.Red)
+                        }
+                    }
 
                     cart.forEach { (id, qty) ->
-                        val item = DefaultKioskData.items.find { it.id == id }
+                        val item = itemsList.find { it.id == id }
                         if (item != null) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = item.name,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
-                                    )
-                                    Text(
-                                        text = "${item.priceEurFormatted} × $qty",
-                                        fontSize = 12.sp,
-                                        color = Color(0xFF6B7280)
-                                    )
+                                    Text(item.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    Text("${item.priceEurFormatted} / ${item.unit}", fontSize = 12.sp, color = Color.Gray)
                                 }
 
                                 Row(
@@ -338,104 +483,183 @@ fun KioskScreen(
                                 ) {
                                     IconButton(
                                         onClick = { removeFromCart(id) },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(30.dp)
                                     ) {
-                                        Icon(Icons.Default.RemoveCircleOutline, "Weniger")
+                                        Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Minus", tint = Color.Gray)
                                     }
-                                    Text(
-                                        text = "$qty",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp
-                                    )
+                                    Text(qty.toString(), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                     IconButton(
                                         onClick = { addToCart(id) },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(30.dp)
                                     ) {
-                                        Icon(Icons.Default.AddCircleOutline, "Mehr")
+                                        Icon(Icons.Default.AddCircleOutline, contentDescription = "Plus", tint = SprachCafeRed)
                                     }
-                                    Text(
-                                        text = String.format("%.2f €", (item.priceCents * qty) / 100.0),
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 14.sp,
-                                        modifier = Modifier.width(60.dp)
-                                    )
                                 }
                             }
                         }
                     }
 
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    Divider()
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text("Gesamtbetrag (Bar):", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            text = "Gesamtsumme:",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
-                        )
-                        Text(
-                            text = String.format("%.2f €", totalCents / 100.0),
-                            fontWeight = FontWeight.ExtraBold,
+                            String.format("%.2f €", totalCents / 100.0),
                             fontSize = 22.sp,
-                            color = Color(0xFF8B1E2D)
+                            fontWeight = FontWeight.Bold,
+                            color = SprachCafeRed
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Action Buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    Button(
+                        onClick = { checkoutCash() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        Button(
-                            onClick = {
-                                Toast.makeText(context, "Erfolgreich verbucht! (Bar)", Toast.LENGTH_SHORT).show()
-                                clearCart()
-                                isCartOpen = false
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Text("💶 Bar bezahlt", fontWeight = FontWeight.Bold)
-                        }
-
-                        Button(
-                            onClick = {
-                                Toast.makeText(context, "Auf Strichliste gebucht", Toast.LENGTH_SHORT).show()
-                                clearCart()
-                                isCartOpen = false
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B1E2D)),
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Text("📝 Strichliste", fontWeight = FontWeight.Bold)
-                        }
+                        Icon(Icons.Default.Check, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Bar kassiert: ${String.format("%.2f €", totalCents / 100.0)}",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
-
-                    Spacer(modifier = Modifier.height(24.dp))
                 }
             }
         }
 
-        // Camera Barcode Scanner View
-        if (isScannerOpen) {
-            BarcodeScannerView(
-                onBarcodeScanned = { scannedCode ->
-                    val matchedItem = DefaultKioskData.items.find { it.barcode == scannedCode }
-                    if (matchedItem != null) {
-                        addToCart(matchedItem.id)
-                        Toast.makeText(context, "Erkannt: ${matchedItem.name}", Toast.LENGTH_SHORT).show()
-                        isScannerOpen = false
-                    } else {
-                        Toast.makeText(context, "Unbekannter Barcode: $scannedCode", Toast.LENGTH_LONG).show()
+        // Dialog: Entnahme buchen (Barauszahlung)
+        if (showPayoutDialog) {
+            AlertDialog(
+                onDismissRequest = { showPayoutDialog = false },
+                icon = {
+                    Icon(Icons.Default.MoneyOff, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(32.dp))
+                },
+                title = { Text("Barauszahlung / Entnahme buchen", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Trage hier Betrag und Verwendungszweck ein. Die Kasse verringert ihren Soll-Bestand entsprechend.", fontSize = 13.sp, color = Color(0xFF4B5563))
+
+                        OutlinedTextField(
+                            value = payoutAmountInput,
+                            onValueChange = { payoutAmountInput = it },
+                            label = { Text("Betrag in €") },
+                            placeholder = { Text("z. B. 4,50") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text("Verwendungszweck:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+                        val chips = listOf("Milch / Hafermilch", "Kaffeebohnen", "Obst / Snacks", "Auslagen-Erstattung", "Tresor-Einwurf", "Sonstiges")
+                        chips.chunked(2).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                row.forEach { chip ->
+                                    FilterChip(
+                                        selected = payoutPurpose == chip,
+                                        onClick = { payoutPurpose = chip },
+                                        label = { Text(chip, fontSize = 11.sp) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
                     }
                 },
-                onClose = { isScannerOpen = false }
+                confirmButton = {
+                    Button(
+                        onClick = { bookPayout() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                    ) {
+                        Text("Entnahme buchen")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showPayoutDialog = false }) {
+                        Text("Abbrechen")
+                    }
+                }
+            )
+        }
+
+        // Dialog: Spende buchen (Ideelle Sphäre)
+        if (showDonationDialog) {
+            AlertDialog(
+                onDismissRequest = { showDonationDialog = false },
+                icon = {
+                    Icon(Icons.Default.VolunteerActivism, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(32.dp))
+                },
+                title = { Text("Spende erfassen (0% MwSt)", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Spenden für den Verein fließen in den Kassenstand ein und werden der ideellen Sphäre zugeordnet.", fontSize = 13.sp, color = Color(0xFF4B5563))
+
+                        // Quick donation chips
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("2,00", "5,00", "10,00", "20,00").forEach { amount ->
+                                OutlinedButton(
+                                    onClick = { donationAmountInput = amount },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
+                                ) {
+                                    Text("$amount €", fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = donationAmountInput,
+                            onValueChange = { donationAmountInput = it },
+                            label = { Text("Spendenbetrag in €") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text("Spendenzweck:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        val donationPurposes = listOf("Allgemeine Spende", "Kinderprojekte", "Kulturveranstaltung")
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            donationPurposes.forEach { p ->
+                                FilterChip(
+                                    selected = donationPurpose == p,
+                                    onClick = { donationPurpose = p },
+                                    label = { Text(p, fontSize = 10.sp) }
+                                )
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = donorNameInput,
+                            onValueChange = { donorNameInput = it },
+                            label = { Text("Spendername (optional)") },
+                            placeholder = { Text("Für Spendenbescheinigung") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { bookDonation() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB45309))
+                    ) {
+                        Text("Spende erfassen")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDonationDialog = false }) {
+                        Text("Abbrechen")
+                    }
+                }
             )
         }
     }
