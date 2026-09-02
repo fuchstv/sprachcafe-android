@@ -10,10 +10,8 @@ permissions:
 
 jobs:
   build:
-    name: Build Signed Android APK
+    name: Build Signed Android APK & AAB
     runs-on: ubuntu-latest
-    env:
-      HAS_PLAY_SECRET: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != '' }}
 
     steps:
       - name: Checkout Code
@@ -73,13 +71,3 @@ jobs:
             app/build/outputs/bundle/release/*.aab
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish to Google Play (Automated 0-Click Deployment)
-        if: env.HAS_PLAY_SECRET == 'true'
-        uses: r0adkll/upload-google-play@v1.1.5
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: org.sprachcafe.team
-          releaseFiles: app/build/outputs/bundle/release/*.aab
-          track: production
-          status: completed
