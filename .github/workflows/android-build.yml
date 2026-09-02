@@ -27,17 +27,20 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Release APK
+      - name: Build Release APK & App Bundle (AAB)
         env:
+          BUILD_NUMBER: ${{ github.run_number }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'sprachcafe2026' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'sprachcafe2026' }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease bundleRelease --no-daemon
 
-      - name: Upload APK Artifact
+      - name: Upload Build Artifacts (APK & AAB)
         uses: actions/upload-artifact@v4
         with:
-          name: sprachcafe-team-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: sprachcafe-team-release-builds
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
           retention-days: 30
 
       - name: Create GitHub Release
@@ -49,14 +52,22 @@ jobs:
           body: |
             ### ☕ SprachCafé Team & Betriebs-App (Android BYOD)
             
-            **Neue Funktionen in diesem Release:**
-            * ☕ **Kiosk & Café Kasse:** Große Kacheln für alle 18 Café- & Kioskartikel, Strichlisten-Buchung & Barverkauf.
-            * 📸 **Kamera-Barcode-Scanner:** Integrierter Google ML Kit EAN-13 Scanner für Flaschen & Snacks (100% on-device).
-            * 🧮 **Digitaler Kassensturz:** Automatischer Tagesabschluss mit 50,00 € Wechselgeldsockel & Differenzermittlung.
-            * 📋 **GoBD-Minderungsprotokoll:** Finanzamt-Nachweis für Schwund, MHD-Ablauf und Helferverpflegung.
-            * 📚 **Hausbibliothek Scanner:** ISBN-Kamera-Scan zur Bestandsabfrage und Ausleihe am Bücherregal.
+            **Pakete in diesem Release:**
+            * 📦 **app-release.aab:** Android App Bundle für den **Google Workspace Play Store (Managed Google Play)** – voll kompatibel mit dem **Erweiterten Sicherheitsprogramm**!
+            * 📲 **app-release.apk:** Eigenständiges Installationspaket für Sideloading.
             
-            **Installation:** APK herunterladen, öffnen und „Installieren“ antippen.
-          files: app/build/outputs/apk/release/*.apk
+            **Enthaltene Module:**
+            * ☕ **Kiosk & Café Kasse:** 18 Vereins- & Café-Artikel, Barverkauf & Strichlisten.
+            * 📸 **Kamera-Barcode-Scanner:** On-Device Google ML Kit Scanner für EAN-13 Flaschen & Snacks.
+            * 🧮 **Digitaler Kassensturz:** Tagesabschluss mit 50,00 € Sockel.
+            * 📋 **GoBD-Minderung:** Nachweis für Schwund, MHD & Helferverpflegung.
+            * 📚 **Hausbibliothek:** ISBN-Scanner & Ausleihbuchung für 400+ Bücher.
+            
+            **Installation:**
+            * **Im Google Workspace:** Das `.aab` in der Google Admin Console als Private App hochladen.
+            * **Direkt:** Das `.apk` herunterladen und installieren.
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
