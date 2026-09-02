@@ -73,13 +73,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to Google Play (Automated 0-Click Deployment)
-        if: ${{ env.HAS_PLAY_KEY == 'true' }}
-        uses: r0adkll/upload-google-play@v1
+        if: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != '' }}
+        uses: r0adkll/upload-google-play@v1.1.5
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: org.sprachcafe.team
           releaseFiles: app/build/outputs/bundle/release/*.aab
           track: production
           status: completed
-        env:
-          HAS_PLAY_KEY: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != '' }}
