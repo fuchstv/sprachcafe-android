@@ -57,9 +57,41 @@ Diese Anleitung erklärt, wie die Android-App **SprachCafé Team** als **private
 
 ## 📲 So installieren Teammitglieder die App auf ihrem Handy
 
-1. Öffne auf dem Android-Smartphone die normale **Google Play Store** App.
-2. Tippe oben rechts auf das Profilbild und stelle sicher, dass das Vereinskonto **`...@sprachcafe-polnisch.org`** ausgewählt ist.
-3. Im Google Play Store erscheint nun ein neuer Tab:  
-   👉 **„SprachCafé Polnisch e.V.“** (neben *„Für dich“* und *„Top-Charts“*).
-4. Tippe auf **SprachCafé Team** ➔ **„Installieren“**.
-5. Die App wird wie jede normale App aus dem Store installiert – **vollständig konform mit dem Erweiterten Schutz!**
+1. **Arbeitsprofil (BYOD):** Wenn das Google-Workspace-Konto `@sprachcafe-polnisch.org` auf dem Android-Smartphone hinzugefügt wird, richtet Android automatisch das geschützte **Arbeitsprofil** ein.
+2. Im App-Drawer gibt es den Reiter **„Arbeit“** (Apps mit dem kleinen blauen **Koffer-Symbol 💼**).
+3. Öffne dort die App **Google Play Store (mit Koffer-Symbol 💼)**.
+4. Im Store werden exklusiv die freigegebenen Vereins-Apps angezeigt.
+5. Tippe auf **SprachCafé Team** ➔ **„Installieren“**.
+6. Die App wird wie jede normale App aus dem Store installiert – **vollständig konform mit dem Erweiterten Sicherheitsprogramm!**
+
+---
+
+## 🔄 App aktualisieren mit dem CLI-Workflow (Option A)
+
+Wenn neue Funktionen oder Fehlerbehebungen für die App programmiert wurden:
+
+### 1. Build & Release per CLI auslösen:
+```bash
+cd /home/ubuntu/sprachcafe-android
+./scripts/release.sh "Beschreibung des Updates (z. B. Kassen-Optimierung)"
+```
+
+Das Skript erledigt vollautomatisch:
+* Git commit & push auf `main`
+* Cloud-Build in GitHub Actions (Kompilierung mit JDK 17 & SDK 34)
+* Erhöhung des `versionCode` für Google Play
+* Erstellung des GitHub Releases
+* Aktualisierung der Direkt-APK unter `https://team.sprachcafe-polnisch.org/downloads/app-release.apk`
+* Herunterladen des signierten AAB-Pakets nach:  
+  `build-releases/app-release-latest.aab`
+
+### 2. AAB im Managed Google Play iFrame aktualisieren (10 Sekunden):
+1. Öffne die Admin Console: [admin.google.com](https://admin.google.com) ➔ **Apps** ➔ **Web- und mobile Apps**.
+2. Klicke auf **„App hinzufügen“** ➔ **„Private Android-App hinzufügen“** (das Schloss-Symbol 🔒).
+3. Klicke im iFrame links auf das Schloss-Symbol **„Private Apps“**.
+4. Wähle **„SprachCafé Team“** aus und klicke auf **„Bearbeiten“** (Stift-Symbol).
+5. Ziehe die Datei `build-releases/app-release-latest.aab` hinein und klicke auf **Speichern**.
+
+### 3. Automatische Verteilung an das Team:
+* **Hintergrund-Update:** Google Play aktualisiert die App auf allen Geräten der Helfer automatisch im Hintergrund (über Nacht / im WLAN).
+* **In-App Update:** Öffnet ein Teammitglied die App, prüft die integrierte Google Play Update API automatisch auf Aktualisierungen und bietet direkt den Button *„Jetzt aktualisieren“* an.
