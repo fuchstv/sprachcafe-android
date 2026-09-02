@@ -293,9 +293,9 @@ object ApiClient {
                     val b = arr.getJSONObject(i)
                     list.add(
                         LibraryBook(
-                            isbn = b.getString("isbn"),
-                            title = b.getString("title"),
-                            author = b.getString("author"),
+                            isbn = b.optString("isbn").takeIf { it.isNotBlank() } ?: b.optString("signature").takeIf { it.isNotBlank() } ?: "LIB-${b.optInt("id", i + 1)}",
+                            title = b.optString("title", "Ohne Titel"),
+                            author = b.optString("author", "Unbekannt"),
                             category = b.optString("category").takeIf { it.isNotEmpty() },
                             shelfLocation = b.optString("shelf_location").takeIf { it.isNotEmpty() },
                             isLent = b.optInt("is_lent", 0) == 1,
