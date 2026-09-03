@@ -660,14 +660,13 @@ fun KioskScreen(
                                         isMemberRedeeming = false
                                         if (res.isSuccess) {
                                             val remaining = res.getOrDefault(member.coffeeQuotaRemaining - 1)
-                                            val tx = CashTransaction(
+                                            dbHelper.addTransaction(
                                                 sessionId = sessId,
                                                 type = TransactionType.SALE,
                                                 amountCents = 0,
                                                 purpose = "☕ Freikaffee: ${member.name} (${member.memberNumber})",
-                                                donorOrMemberName = member.name
+                                                donorName = member.name
                                             )
-                                            dbHelper.addCashTransaction(tx)
                                             Toast.makeText(
                                                 context,
                                                 "☕ Freikaffee gebucht! Noch $remaining Kaffees übrig.",
