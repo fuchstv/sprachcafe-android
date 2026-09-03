@@ -178,7 +178,15 @@ object ApiClient {
         }
     }
 
-    suspend fun addTransaction(sessionId: Long, type: String, amountCents: Int, purpose: String?, donorName: String?, itemsJson: String?): Result<Long> = withContext(Dispatchers.IO) {
+    suspend fun addTransaction(
+        sessionId: Long,
+        type: String,
+        amountCents: Int,
+        purpose: String?,
+        donorName: String?,
+        itemsJson: String?,
+        receiptPhotoUrl: String? = null
+    ): Result<Long> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/sessions/$sessionId/transaction")
             val conn = url.openConnection() as HttpURLConnection
@@ -194,6 +202,9 @@ object ApiClient {
                 put("purpose", purpose)
                 put("donor_or_member_name", donorName)
                 put("items_json", itemsJson)
+                if (!receiptPhotoUrl.isNullOrEmpty()) {
+                    put("receipt_photo_url", receiptPhotoUrl)
+                }
             }
 
             OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
@@ -205,6 +216,90 @@ object ApiClient {
             } else {
                 Result.failure(Exception("HTTP ${conn.responseCode}"))
             }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun linkBarcode(itemId: String, barcode: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/articles/link-barcode")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("itemId", itemId)
+                put("barcode", barcode)
+            }
+            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
+            if (conn.responseCode in 200..204) Result.success(true)
+            else Result.failure(Exception("HTTP ${conn.responseCode}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun saveArticle(item: KioskItem): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/articles")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("id", item.id)
+                put("name", item.name)
+                put("category", item.category.name)
+                put("unit", item.unit)
+                put("price_cents", item.priceCents)
+                put("cost_cents", item.costCents)
+                put("tax_sphere", item.taxSphere)
+                put("barcode", item.barcode)
+                put("icon", item.icon)
+                put("is_active", if (item.isActive) 1 else 0)
+            }
+            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
+            if (conn.responseCode in 200..204) Result.success(true)
+            else Result.failure(Exception("HTTP ${conn.responseCode}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun submitInventorySync(
+        countedItems: Map<String, Int>,
+        countedBy: String,
+        notes: String? = null,
+        location: String = "Schulzestraße (Pankow)"
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/stock/inventory-sync")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+
+            val itemsObj = JSONObject()
+            countedItems.forEach { (k, v) -> itemsObj.put(k, v) }
+
+            val payload = JSONObject().apply {
+                put("countedItems", itemsObj)
+                put("countedBy", countedBy)
+                put("notes", notes)
+                put("location", location)
+            }
+            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
+            if (conn.responseCode in 200..204) Result.success(true)
+            else Result.failure(Exception("HTTP ${conn.responseCode}"))
         } catch (e: Exception) {
             Result.failure(e)
         }

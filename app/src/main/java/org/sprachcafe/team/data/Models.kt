@@ -63,6 +63,30 @@ enum class TransactionType(val labelDe: String) {
     LIBRARY_FEE("Bibliotheksgebühr")
 }
 
+enum class PayoutCategory(val labelDe: String) {
+    PURCHASE("Wareneinkauf (Beleg / Bestand steigt)"),
+    OUTTAKE("Warenentnahme (Event/Verbrauch / Bestand sinkt)"),
+    PURE_CASH("Reine Barauszahlung (ohne Artikel)")
+}
+
+data class ReceiptArticleItem(
+    val itemId: String,
+    val name: String,
+    val category: ItemCategory = ItemCategory.SNACKS,
+    val unit: String = "Stk",
+    val qty: Int = 1,
+    val costCents: Int = 0,
+    val sellingCents: Int = 0,
+    val mhd: String? = null,
+    val barcode: String? = null,
+    val updateCatalogCost: Boolean = true
+) {
+    val totalCostCents: Int get() = costCents * qty
+    val totalCostEurFormatted: String get() = String.format("%.2f €", totalCostCents / 100.0)
+    val marginPercent: Int
+        get() = if (sellingCents > 0) Math.round(((sellingCents - costCents).toDouble() / sellingCents) * 100).toInt() else 0
+}
+
 data class CashTransaction(
     val id: Long = 0,
     val sessionId: Long,

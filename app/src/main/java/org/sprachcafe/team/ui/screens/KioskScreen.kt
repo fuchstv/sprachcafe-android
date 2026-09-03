@@ -9,6 +9,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -29,6 +31,9 @@ import kotlinx.coroutines.launch
 import org.sprachcafe.team.data.*
 import org.sprachcafe.team.ui.components.BarcodeScannerView
 import org.sprachcafe.team.ui.theme.SprachCafeRed
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,8 +54,31 @@ fun KioskScreen(
 
     // Dialog States
     var showPayoutDialog by remember { mutableStateOf(false) }
+    var payoutCategory by remember { mutableStateOf(PayoutCategory.PURCHASE) }
     var payoutAmountInput by remember { mutableStateOf("") }
-    var payoutPurpose by remember { mutableStateOf("Milch / Hafermilch") }
+    var payoutPurpose by remember { mutableStateOf("Kiosk-Nachkauf / Vorräte") }
+    var receiptArticles by remember { mutableStateOf<List<ReceiptArticleItem>>(emptyList()) }
+    var isPayoutScannerOpen by remember { mutableStateOf(false) }
+
+    // Sub-item entry inside receipt dialog
+    var selectedItemForReceipt by remember { mutableStateOf<KioskItem?>(null) }
+    var showArticlePickerDropdown by remember { mutableStateOf(false) }
+    var articlePickerQuery by remember { mutableStateOf("") }
+    var itemQtyInput by remember { mutableStateOf("1") }
+    var itemCostInput by remember { mutableStateOf("") }
+    var itemMhdInput by remember { mutableStateOf("") }
+    var updateCatalogCostChecked by remember { mutableStateOf(true) }
+
+    // Dialog for unknown barcode: Link or Create
+    var unknownScannedBarcode by remember { mutableStateOf<String?>(null) }
+    var showUnknownBarcodeDialog by remember { mutableStateOf(false) }
+    var showLinkBarcodePicker by remember { mutableStateOf(false) }
+    var showCreateArticleDialog by remember { mutableStateOf(false) }
+    var newArticleName by remember { mutableStateOf("") }
+    var newArticleCategory by remember { mutableStateOf(ItemCategory.SNACKS) }
+    var newArticlePrice by remember { mutableStateOf("2.00") }
+    var newArticleCost by remember { mutableStateOf("1.00") }
+    var newArticleUnit by remember { mutableStateOf("Stk") }
 
     var showDonationDialog by remember { mutableStateOf(false) }
     var donationAmountInput by remember { mutableStateOf("") }
@@ -143,35 +171,123 @@ fun KioskScreen(
     }
 
     fun bookPayout() {
-        val cleanVal = payoutAmountInput.replace(",", ".").trim()
-        val cents = ((cleanVal.toDoubleOrNull() ?: 0.0) * 100).toInt()
-        if (cents <= 0) {
-            Toast.makeText(context, "Bitte einen gültigen Betrag eingeben", Toast.LENGTH_SHORT).show()
-            return
-        }
-
         val sessionId = prefs.activeSessionId ?: 1L
-        dbHelper.addTransaction(
-            sessionId = sessionId,
-            type = TransactionType.PAYOUT,
-            amountCents = cents,
-            purpose = payoutPurpose
-        )
+        val cleanVal = payoutAmountInput.replace(",", ".").trim()
+        var cents = ((cleanVal.toDoubleOrNull() ?: 0.0) * 100).toInt()
 
-        coroutineScope.launch {
-            ApiClient.addTransaction(
+        if (payoutCategory == PayoutCategory.PURCHASE) {
+            val totalArticleCost = receiptArticles.sumOf { it.totalCostCents }
+            if (cents <= 0 && totalArticleCost > 0) {
+                cents = totalArticleCost
+            }
+            if (cents <= 0 && receiptArticles.isEmpty()) {
+                Toast.makeText(context, "Bitte einen Betrag oder Artikel erfassen", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            // Build JSON array of articles for stock intake
+            val itemsJson = org.json.JSONArray().apply {
+                receiptArticles.forEach { a ->
+                    put(org.json.JSONObject().apply {
+                        put("id", a.itemId)
+                        put("name", a.name)
+                        put("category", a.category.name)
+                        put("unit", a.unit)
+                        put("qty", a.qty)
+                        put("costCents", a.costCents)
+                        put("sellingCents", a.sellingCents)
+                        put("mhd", a.mhd)
+                        put("barcode", a.barcode)
+                        put("updateCatalogCost", a.updateCatalogCost)
+                    })
+                }
+            }.toString()
+
+            val summaryText = if (receiptArticles.isNotEmpty()) {
+                receiptArticles.joinToString(", ") { "${it.qty}x ${it.name}" }
+            } else {
+                payoutPurpose
+            }
+
+            dbHelper.addTransaction(
                 sessionId = sessionId,
-                type = "PAYOUT",
+                type = TransactionType.PAYOUT,
                 amountCents = cents,
-                purpose = payoutPurpose,
-                donorName = null,
-                itemsJson = null
+                purpose = "Einkauf: $summaryText",
+                itemsJson = itemsJson
             )
+
+            coroutineScope.launch {
+                ApiClient.addTransaction(
+                    sessionId = sessionId,
+                    type = "PAYOUT",
+                    amountCents = cents,
+                    purpose = "Wareneinkauf: $summaryText",
+                    donorName = prefs.memberName ?: "Schichthelfer",
+                    itemsJson = itemsJson
+                )
+            }
+
+            Toast.makeText(context, "✅ Wareneinkauf über ${String.format("%.2f €", cents / 100.0)} gebucht. Bestand erhöht!", Toast.LENGTH_LONG).show()
+        } else if (payoutCategory == PayoutCategory.OUTTAKE) {
+            if (receiptArticles.isEmpty()) {
+                Toast.makeText(context, "Bitte mindestens einen Artikel zur Entnahme auswählen", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            val itemsJson = org.json.JSONArray().apply {
+                receiptArticles.forEach { a ->
+                    put(org.json.JSONObject().apply {
+                        put("id", a.itemId)
+                        put("qty", a.qty)
+                    })
+                }
+            }.toString()
+
+            coroutineScope.launch {
+                ApiClient.addTransaction(
+                    sessionId = sessionId,
+                    type = "CONSUMPTION",
+                    amountCents = 0,
+                    purpose = payoutPurpose.ifBlank { "Warenentnahme / Event" },
+                    donorName = prefs.memberName ?: "Schichthelfer",
+                    itemsJson = itemsJson
+                )
+            }
+
+            Toast.makeText(context, "📦 Warenentnahme gebucht. Bestand reduziert!", Toast.LENGTH_LONG).show()
+        } else {
+            // PURE_CASH
+            if (cents <= 0) {
+                Toast.makeText(context, "Bitte einen gültigen Betrag eingeben", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            dbHelper.addTransaction(
+                sessionId = sessionId,
+                type = TransactionType.PAYOUT,
+                amountCents = cents,
+                purpose = payoutPurpose
+            )
+
+            coroutineScope.launch {
+                ApiClient.addTransaction(
+                    sessionId = sessionId,
+                    type = "PAYOUT",
+                    amountCents = cents,
+                    purpose = payoutPurpose,
+                    donorName = null,
+                    itemsJson = null
+                )
+            }
+
+            Toast.makeText(context, "Barauszahlung von ${String.format("%.2f €", cents / 100.0)} gebucht.", Toast.LENGTH_SHORT).show()
         }
 
-        Toast.makeText(context, "Barauszahlung von ${String.format("%.2f €", cents / 100.0)} gebucht.", Toast.LENGTH_SHORT).show()
         showPayoutDialog = false
         payoutAmountInput = ""
+        receiptArticles = emptyList()
+        selectedItemForReceipt = null
         refreshItems()
     }
 
@@ -535,57 +651,650 @@ fun KioskScreen(
             }
         }
 
-        // Dialog: Entnahme buchen (Barauszahlung)
+        // Dialog: Entnahme buchen (Wareneinkauf / Warenentnahme / Reine Barauszahlung)
         if (showPayoutDialog) {
+            val totalArticleCost = remember(receiptArticles) { receiptArticles.sumOf { it.totalCostCents } }
+            val scrollState = rememberScrollState()
+
             AlertDialog(
                 onDismissRequest = { showPayoutDialog = false },
                 icon = {
-                    Icon(Icons.Default.MoneyOff, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(32.dp))
+                    Icon(
+                        when (payoutCategory) {
+                            PayoutCategory.PURCHASE -> Icons.Default.ShoppingCart
+                            PayoutCategory.OUTTAKE -> Icons.Default.Inventory2
+                            PayoutCategory.PURE_CASH -> Icons.Default.Payments
+                        },
+                        contentDescription = null,
+                        tint = when (payoutCategory) {
+                            PayoutCategory.PURCHASE -> Color(0xFF059669)
+                            PayoutCategory.OUTTAKE -> Color(0xFFD97706)
+                            PayoutCategory.PURE_CASH -> Color(0xFFDC2626)
+                        },
+                        modifier = Modifier.size(32.dp)
+                    )
                 },
-                title = { Text("Barauszahlung / Entnahme buchen", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+                title = {
+                    Text(
+                        when (payoutCategory) {
+                            PayoutCategory.PURCHASE -> "Wareneinkauf buchen (Beleg)"
+                            PayoutCategory.OUTTAKE -> "Warenentnahme buchen"
+                            PayoutCategory.PURE_CASH -> "Reine Barauszahlung"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp
+                    )
+                },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Trage hier Betrag und Verwendungszweck ein. Die Kasse verringert ihren Soll-Bestand entsprechend.", fontSize = 13.sp, color = Color(0xFF4B5563))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(scrollState),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Category Selector
+                        Text("Art der Buchung:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            FilterChip(
+                                selected = payoutCategory == PayoutCategory.PURCHASE,
+                                onClick = { payoutCategory = PayoutCategory.PURCHASE },
+                                label = { Text("🛍️ Einkauf", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = payoutCategory == PayoutCategory.OUTTAKE,
+                                onClick = { payoutCategory = PayoutCategory.OUTTAKE },
+                                label = { Text("📦 Entnahme", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = payoutCategory == PayoutCategory.PURE_CASH,
+                                onClick = { payoutCategory = PayoutCategory.PURE_CASH },
+                                label = { Text("💵 Barausz.", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
 
-                        OutlinedTextField(
-                            value = payoutAmountInput,
-                            onValueChange = { payoutAmountInput = it },
-                            label = { Text("Betrag in €") },
-                            placeholder = { Text("z. B. 4,50") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        if (payoutCategory == PayoutCategory.PURE_CASH) {
+                            Text(
+                                "Reine Barauszahlung ohne Waren-/Bestandsbezug. Verringert den Soll-Kassenbestand.",
+                                fontSize = 12.sp,
+                                color = Color(0xFF4B5563)
+                            )
+                            OutlinedTextField(
+                                value = payoutAmountInput,
+                                onValueChange = { payoutAmountInput = it },
+                                label = { Text("Betrag in € *") },
+                                placeholder = { Text("z. B. 15,00") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
 
-                        Text("Verwendungszweck:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-
-                        val chips = listOf("Milch / Hafermilch", "Kaffeebohnen", "Obst / Snacks", "Auslagen-Erstattung", "Tresor-Einwurf", "Sonstiges")
-                        chips.chunked(2).forEach { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                row.forEach { chip ->
-                                    FilterChip(
-                                        selected = payoutPurpose == chip,
-                                        onClick = { payoutPurpose = chip },
-                                        label = { Text(chip, fontSize = 11.sp) },
-                                        modifier = Modifier.weight(1f)
-                                    )
+                            Text("Verwendungszweck:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            val cashPurposes = listOf("Auslagen-Erstattung", "Reinigungsmittel", "Tresor-Einwurf", "Gebühren / Porto", "Sonstiges")
+                            cashPurposes.chunked(2).forEach { row ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    row.forEach { chip ->
+                                        FilterChip(
+                                            selected = payoutPurpose == chip,
+                                            onClick = { payoutPurpose = chip },
+                                            label = { Text(chip, fontSize = 11.sp) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
                                 }
                             }
+                        } else {
+                            // PURCHASE or OUTTAKE: Article intake/outtake
+                            Text(
+                                if (payoutCategory == PayoutCategory.PURCHASE)
+                                    "Erfasse gekaufte Artikel (EAN-Scan oder manuell). Der Kassenbestand sinkt um den Belegbetrag und die Lagerbestände werden aufgestockt."
+                                else
+                                    "Erfasse entnommene Artikel (z. B. für Kurse, Events, Eigenverbrauch). Die Lagerbestände sinken, der Kassenbestand bleibt unverändert.",
+                                fontSize = 12.sp,
+                                color = Color(0xFF4B5563)
+                            )
+
+                            // Action buttons: Barcode Scan & Select from list
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { isPayoutScannerOpen = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = SprachCafeRed),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("EAN-Scan", fontSize = 12.sp)
+                                }
+
+                                OutlinedButton(
+                                    onClick = { showArticlePickerDropdown = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Artikel suchen", fontSize = 12.sp)
+                                }
+                            }
+
+                            // Active article being configured
+                            if (selectedItemForReceipt != null) {
+                                val curItem = selectedItemForReceipt!!
+                                val enteredCostCents = ((itemCostInput.replace(",", ".").toDoubleOrNull() ?: 0.0) * 100).toInt()
+                                val sellingPriceCents = curItem.priceCents
+                                val margin = if (sellingPriceCents > 0) Math.round(((sellingPriceCents - enteredCostCents).toDouble() / sellingPriceCents) * 100).toInt() else 0
+                                val suggestedVkCents = Math.round(enteredCostCents * 1.8).toInt()
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFFF3F4F6),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFD1D5DB)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Text(curItem.icon, fontSize = 20.sp)
+                                                Column {
+                                                    Text(curItem.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                    Text("Katalog-VK: ${curItem.priceEurFormatted}", fontSize = 11.sp, color = Color(0xFF6B7280))
+                                                }
+                                            }
+                                            IconButton(
+                                                onClick = { selectedItemForReceipt = null },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            OutlinedTextField(
+                                                value = itemQtyInput,
+                                                onValueChange = { itemQtyInput = it },
+                                                label = { Text("Menge (${curItem.unit})") },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            if (payoutCategory == PayoutCategory.PURCHASE) {
+                                                OutlinedTextField(
+                                                    value = itemCostInput,
+                                                    onValueChange = { itemCostInput = it },
+                                                    label = { Text("EK (€ / ${curItem.unit})") },
+                                                    placeholder = { Text("z. B. 0,90") },
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    singleLine = true,
+                                                    modifier = Modifier.weight(1.2f)
+                                                )
+                                            }
+                                        }
+
+                                        // EK/VK Margin Check Banner
+                                        if (payoutCategory == PayoutCategory.PURCHASE && enteredCostCents > 0) {
+                                            if (sellingPriceCents <= enteredCostCents || margin < 25) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color(0xFFFEE2E2),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444)),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                            Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(16.dp))
+                                                            Text(
+                                                                if (sellingPriceCents <= enteredCostCents) "Achtung: VK liegt unter/am EK!" else "Warnung: Geringe Marge (${margin}%)!",
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = 11.sp,
+                                                                color = Color(0xFF991B1B)
+                                                            )
+                                                        }
+                                                        Text(
+                                                            "EK: ${String.format("%.2f €", enteredCostCents / 100.0)} • VK: ${curItem.priceEurFormatted}. Empfohlener VK: ${String.format("%.2f €", suggestedVkCents / 100.0)}",
+                                                            fontSize = 10.sp,
+                                                            color = Color(0xFF7F1D1D)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // MHD Date input & quick buttons
+                                        if (payoutCategory == PayoutCategory.PURCHASE) {
+                                            OutlinedTextField(
+                                                value = itemMhdInput,
+                                                onValueChange = { itemMhdInput = it },
+                                                label = { Text("MHD (JJJJ-MM-TT)") },
+                                                placeholder = { Text("z. B. 2026-12-31") },
+                                                singleLine = true,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+
+                                            // Quick MHD chips
+                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                listOf(1 to "+1M", 3 to "+3M", 6 to "+6M", 12 to "+1J").forEach { (months, label) ->
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            val cal = Calendar.getInstance()
+                                                            cal.add(Calendar.MONTH, months)
+                                                            itemMhdInput = SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).format(cal.time)
+                                                        },
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                                        modifier = Modifier.weight(1f)
+                                                    ) {
+                                                        Text(label, fontSize = 10.sp)
+                                                    }
+                                                }
+                                                OutlinedButton(
+                                                    onClick = { itemMhdInput = "" },
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Text("Kein", fontSize = 10.sp)
+                                                }
+                                            }
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                val qty = itemQtyInput.toIntOrNull() ?: 1
+                                                if (qty <= 0) return@Button
+                                                val cost = if (payoutCategory == PayoutCategory.PURCHASE) enteredCostCents else curItem.costCents
+                                                val mhd = itemMhdInput.trim().takeIf { it.isNotEmpty() }
+
+                                                val newArticle = ReceiptArticleItem(
+                                                    itemId = curItem.id,
+                                                    name = curItem.name,
+                                                    category = curItem.category,
+                                                    unit = curItem.unit,
+                                                    qty = qty,
+                                                    costCents = cost,
+                                                    sellingCents = curItem.priceCents,
+                                                    mhd = mhd,
+                                                    barcode = curItem.barcode,
+                                                    updateCatalogCost = updateCatalogCostChecked
+                                                )
+                                                receiptArticles = receiptArticles + newArticle
+                                                selectedItemForReceipt = null
+                                                itemQtyInput = "1"
+                                                itemCostInput = ""
+                                                itemMhdInput = ""
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Zu Beleg hinzufügen", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // List of added articles
+                            if (receiptArticles.isNotEmpty()) {
+                                Text("Erfasste Artikel (${receiptArticles.size}):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                receiptArticles.forEach { a ->
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5E7EB)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column {
+                                                Text("${a.qty}x ${a.name}", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                Text(
+                                                    if (payoutCategory == PayoutCategory.PURCHASE)
+                                                        "${a.totalCostEurFormatted} (${String.format("%.2f €", a.costCents / 100.0)} / ${a.unit})${if (a.mhd != null) " • MHD: ${a.mhd}" else ""}"
+                                                    else
+                                                        "${a.qty} ${a.unit} entnommen",
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF6B7280)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { receiptArticles = receiptArticles - a },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (payoutCategory == PayoutCategory.PURCHASE) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFFECFDF5),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("Beleg-Gesamtsumme:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF065F46))
+                                            Text(
+                                                String.format("%.2f €", totalArticleCost / 100.0),
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 16.sp,
+                                                color = Color(0xFF047857)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Optional Manual Overwrite / Purpose
+                            OutlinedTextField(
+                                value = payoutPurpose,
+                                onValueChange = { payoutPurpose = it },
+                                label = { Text("Notiz / Einkaufsort") },
+                                placeholder = { Text("z. B. Metro, BioMarkt, Bäckerei") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
                     }
                 },
                 confirmButton = {
                     Button(
                         onClick = { bookPayout() },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = when (payoutCategory) {
+                                PayoutCategory.PURCHASE -> Color(0xFF059669)
+                                PayoutCategory.OUTTAKE -> Color(0xFFD97706)
+                                PayoutCategory.PURE_CASH -> Color(0xFFDC2626)
+                            }
+                        )
                     ) {
-                        Text("Entnahme buchen")
+                        Text(
+                            when (payoutCategory) {
+                                PayoutCategory.PURCHASE -> "Einkauf buchen (${if (totalArticleCost > 0) String.format("%.2f €", totalArticleCost / 100.0) else payoutAmountInput + " €"})"
+                                PayoutCategory.OUTTAKE -> "Entnahme buchen (${receiptArticles.size} Artikel)"
+                                PayoutCategory.PURE_CASH -> "Auszahlung buchen"
+                            }
+                        )
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showPayoutDialog = false }) {
                         Text("Abbrechen")
                     }
+                }
+            )
+        }
+
+        // Barcode Scanner Modal for Payout
+        if (isPayoutScannerOpen) {
+            BarcodeScannerView(
+                onBarcodeScanned = { scanned ->
+                    isPayoutScannerOpen = false
+                    val found = itemsList.find { it.barcode == scanned }
+                    if (found != null) {
+                        selectedItemForReceipt = found
+                        itemCostInput = String.format(Locale.US, "%.2f", found.costCents / 100.0)
+                        itemQtyInput = "1"
+                        Toast.makeText(context, "✅ Gefunden: ${found.name}", Toast.LENGTH_SHORT).show()
+                    } else {
+                        unknownScannedBarcode = scanned
+                        showUnknownBarcodeDialog = true
+                    }
+                },
+                onClose = { isPayoutScannerOpen = false }
+            )
+        }
+
+        // Dialog: Unbekannter Barcode gescannt
+        if (showUnknownBarcodeDialog) {
+            AlertDialog(
+                onDismissRequest = { showUnknownBarcodeDialog = false },
+                icon = { Icon(Icons.Default.HelpOutline, contentDescription = null, tint = SprachCafeRed, modifier = Modifier.size(32.dp)) },
+                title = { Text("Unbekannter Barcode: $unknownScannedBarcode", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+                text = {
+                    Text("Dieser Barcode ist bisher keinem Artikel im Sortiment zugeordnet. Wie möchtest du ihn erfassen?", fontSize = 13.sp)
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        showUnknownBarcodeDialog = false
+                        showCreateArticleDialog = true
+                    }, colors = ButtonDefaults.buttonColors(containerColor = SprachCafeRed)) {
+                        Text("Neuen Artikel anlegen")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showUnknownBarcodeDialog = false
+                        showLinkBarcodePicker = true
+                    }) {
+                        Text("Mit Artikel verknüpfen")
+                    }
+                }
+            )
+        }
+
+        // Dialog: Mit bestehendem Artikel verknüpfen
+        if (showLinkBarcodePicker) {
+            AlertDialog(
+                onDismissRequest = { showLinkBarcodePicker = false },
+                title = { Text("Artikel zum Verknüpfen wählen", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 350.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        itemsList.forEach { itm ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.White,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5E7EB)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val bc = unknownScannedBarcode ?: return@clickable
+                                        coroutineScope.launch {
+                                            ApiClient.linkBarcode(itm.id, bc)
+                                            dbHelper.updateItemBarcode(itm.id, bc)
+                                            refreshItems()
+                                            selectedItemForReceipt = itm.copy(barcode = bc)
+                                            itemCostInput = String.format(Locale.US, "%.2f", itm.costCents / 100.0)
+                                            itemQtyInput = "1"
+                                            showLinkBarcodePicker = false
+                                            Toast.makeText(context, "Barcode verknüpft mit ${itm.name}!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("${itm.icon} ${itm.name}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text(itm.priceEurFormatted, fontSize = 12.sp, color = SprachCafeRed, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showLinkBarcodePicker = false }) { Text("Abbrechen") }
+                }
+            )
+        }
+
+        // Dialog: Neuen Artikel im Sortiment anlegen
+        if (showCreateArticleDialog) {
+            AlertDialog(
+                onDismissRequest = { showCreateArticleDialog = false },
+                title = { Text("Neuen Artikel anlegen", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = newArticleName,
+                            onValueChange = { newArticleName = it },
+                            label = { Text("Artikelname *") },
+                            placeholder = { Text("z. B. Bio Hafermilch 1L") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedTextField(
+                                value = newArticlePrice,
+                                onValueChange = { newArticlePrice = it },
+                                label = { Text("VK in € *") },
+                                placeholder = { Text("2.00") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = newArticleCost,
+                                onValueChange = { newArticleCost = it },
+                                label = { Text("EK in €") },
+                                placeholder = { Text("1.00") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Text("Barcode: ${unknownScannedBarcode ?: "Keiner"}", fontSize = 11.sp, color = Color.Gray)
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val name = newArticleName.trim()
+                            if (name.isEmpty()) return@Button
+                            val vkCents = ((newArticlePrice.replace(",", ".").toDoubleOrNull() ?: 0.0) * 100).toInt()
+                            val ekCents = ((newArticleCost.replace(",", ".").toDoubleOrNull() ?: 0.0) * 100).toInt()
+                            val newItem = KioskItem(
+                                id = "item-${System.currentTimeMillis()}",
+                                name = name,
+                                category = newArticleCategory,
+                                unit = newArticleUnit,
+                                priceCents = vkCents,
+                                costCents = ekCents,
+                                barcode = unknownScannedBarcode,
+                                icon = "📦"
+                            )
+                            coroutineScope.launch {
+                                ApiClient.saveArticle(newItem)
+                                dbHelper.upsertSingleKioskItem(newItem)
+                                refreshItems()
+                                selectedItemForReceipt = newItem
+                                itemCostInput = String.format(Locale.US, "%.2f", ekCents / 100.0)
+                                itemQtyInput = "1"
+                                showCreateArticleDialog = false
+                                newArticleName = ""
+                                Toast.makeText(context, "✅ Artikel angelegt & ausgewählt!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = SprachCafeRed)
+                    ) {
+                        Text("Artikel speichern")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCreateArticleDialog = false }) { Text("Abbrechen") }
+                }
+            )
+        }
+
+        // Dialog: Manuelle Artikelauswahl aus Kiosk-Sortiment
+        if (showArticlePickerDropdown) {
+            val filteredArticles = remember(itemsList, articlePickerQuery) {
+                if (articlePickerQuery.isBlank()) itemsList
+                else itemsList.filter {
+                    it.name.contains(articlePickerQuery, ignoreCase = true) ||
+                    (it.barcode != null && it.barcode.contains(articlePickerQuery))
+                }
+            }
+
+            AlertDialog(
+                onDismissRequest = { showArticlePickerDropdown = false },
+                title = { Text("Artikel auswählen", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = articlePickerQuery,
+                            onValueChange = { articlePickerQuery = it },
+                            placeholder = { Text("Name oder Barcode suchen...") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            filteredArticles.forEach { itm ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5E7EB)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            selectedItemForReceipt = itm
+                                            itemCostInput = String.format(Locale.US, "%.2f", itm.costCents / 100.0)
+                                            itemQtyInput = "1"
+                                            showArticlePickerDropdown = false
+                                            articlePickerQuery = ""
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text(itm.icon, fontSize = 18.sp)
+                                            Text(itm.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        }
+                                        Text(itm.priceEurFormatted, fontSize = 12.sp, color = SprachCafeRed, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showArticlePickerDropdown = false }) { Text("Abbrechen") }
                 }
             )
         }

@@ -192,6 +192,17 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         }
     }
 
+    fun upsertSingleKioskItem(item: KioskItem) {
+        saveKioskItems(listOf(item))
+    }
+
+    fun updateItemBarcode(itemId: String, barcode: String) {
+        val cv = ContentValues().apply {
+            put("barcode", barcode)
+        }
+        writableDatabase.update("kiosk_items", cv, "id = ?", arrayOf(itemId))
+    }
+
     private fun cursorToKioskItem(c: Cursor): KioskItem {
         val catName = c.getString(c.getColumnIndexOrThrow("category"))
         val category = try { ItemCategory.valueOf(catName) } catch (e: Exception) { ItemCategory.COLD_DRINKS }

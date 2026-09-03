@@ -87,17 +87,33 @@ fun InventoryScreen(
         val volunteer = prefs.memberName ?: "Ehrenamtlicher"
 
         coroutineScope.launch {
-            ApiClient.submitInventory(
+            ApiClient.submitInventorySync(
+                countedItems = countedQuantities,
                 countedBy = volunteer,
-                date = dateStr,
-                items = countedQuantities,
                 notes = notesInput
             ).onSuccess {
-                Toast.makeText(context, "✅ Inventurprotokoll erfolgreich an Server übertragen!", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "✅ Inventur erfolgreich synchronisiert & Lagerbestände angepasst!", Toast.LENGTH_LONG).show()
                 countedQuantities = emptyMap()
                 notesInput = ""
-            }.onFailure {
-                Toast.makeText(context, "Lokal gespeichert. Fehler beim Cloud-Sync: ${it.message}", Toast.LENGTH_LONG).show()
+                // Refresh local items
+                ApiClient.fetchArticles().onSuccess { fetched ->
+                    dbHelper.saveKioskItems(fetched)
+                    itemsList = dbHelper.getAllKioskItems()
+                }
+            }.onFailure { syncErr ->
+                // Fallback to legacy inventory log
+                ApiClient.submitInventory(
+                    countedBy = volunteer,
+                    date = dateStr,
+                    items = countedQuantities,
+                    notes = notesInput
+                ).onSuccess {
+                    Toast.makeText(context, "✅ Inventurprotokoll gespeichert (Basis-Sync).", Toast.LENGTH_LONG).show()
+                    countedQuantities = emptyMap()
+                    notesInput = ""
+                }.onFailure {
+                    Toast.makeText(context, "Fehler beim Cloud-Sync: ${it.message}", Toast.LENGTH_LONG).show()
+                }
             }
             isSubmitting = false
         }
@@ -194,10 +210,21 @@ fun InventoryScreen(
                                         color = Color(0xFF1F2937)
                                     )
                                     Text(
-                                        text = "${item.category.labelDe} • ${item.unit}",
+                                        text = "${item.category.labelDe} • Soll: ${item.stockQuantity} ${item.unit}",
                                         fontSize = 12.sp,
-                                        color = Color.Gray
+                                        color = Color(0xFF4B5563)
                                     )
+                                    if (isCounted) {
+                                        val delta = count - item.stockQuantity
+                                        val deltaText = if (delta > 0) "+$delta Mehrmenge" else if (delta < 0) "$delta Fehlbestand" else "✓ Passt genau"
+                                        val deltaColor = if (delta > 0) Color(0xFF2563EB) else if (delta < 0) Color(0xFFDC2626) else Color(0xFF059669)
+                                        Text(
+                                            text = deltaText,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = deltaColor
+                                        )
+                                    }
                                 }
                             }
 
