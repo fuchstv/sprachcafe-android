@@ -169,7 +169,7 @@ object DefaultKioskData {
             name = "Speak-Dating Kartenspiel",
             category = ItemCategory.SHOP,
             unit = "Set",
-            priceCents = 1200,
+            priceCents = 2000,
             costCents = 420,
             taxSphere = "Zweckbetrieb / Merch",
             icon = "🎴"
