@@ -87,6 +87,12 @@ fun KioskScreen(
 
     var activeSession by remember { mutableStateOf<CashSession?>(null) }
 
+    // Club Member States
+    var scannedClubMember by remember { mutableStateOf<ClubMemberVerification?>(null) }
+    var scannedMemberQrToken by remember { mutableStateOf("") }
+    var showClubMemberDialog by remember { mutableStateOf(false) }
+    var isMemberRedeeming by remember { mutableStateOf(false) }
+
     fun refreshItems() {
         itemsList = dbHelper.getAllKioskItems()
         activeSession = dbHelper.getActiveCashSession()
@@ -541,15 +547,168 @@ fun KioskScreen(
         if (isScannerOpen) {
             BarcodeScannerView(
                 onBarcodeScanned = { barcode ->
-                    val found = itemsList.find { it.barcode == barcode }
-                    if (found != null) {
-                        addToCart(found.id)
-                        Toast.makeText(context, "${found.name} hinzugefügt", Toast.LENGTH_SHORT).show()
+                    if (barcode.startsWith("SCP-MEMBER:")) {
+                        isScannerOpen = false
+                        coroutineScope.launch {
+                            ApiClient.verifyClubMember(barcode).onSuccess { member ->
+                                scannedClubMember = member
+                                scannedMemberQrToken = barcode
+                                showClubMemberDialog = true
+                            }.onFailure { err ->
+                                Toast.makeText(context, "Ungültiger Mitgliedsausweis: ${err.message}", Toast.LENGTH_LONG).show()
+                            }
+                        }
                     } else {
-                        Toast.makeText(context, "Unbekannter Barcode: $barcode", Toast.LENGTH_SHORT).show()
+                        val found = itemsList.find { it.barcode == barcode }
+                        if (found != null) {
+                            addToCart(found.id)
+                            Toast.makeText(context, "${found.name} hinzugefügt", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Unbekannter Barcode: $barcode", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 },
                 onClose = { isScannerOpen = false }
+            )
+        }
+
+        // Club Member Verification & Free Coffee Redemption Dialog
+        if (showClubMemberDialog && scannedClubMember != null) {
+            val member = scannedClubMember!!
+            AlertDialog(
+                onDismissRequest = { showClubMemberDialog = false },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("☕", fontSize = 24.sp)
+                        Column {
+                            Text(
+                                text = "Vereinsmitglied erkannt",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = SprachCafeRed
+                            )
+                            Text(
+                                text = "${member.memberNumber} • ${member.tier}",
+                                fontSize = 12.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFFFAF5EB),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = member.name,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = Color(0xFF1D1B1A)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Status:", fontSize = 12.sp, color = Color.Gray)
+                                    Text(
+                                        text = if (member.valid) "Gültig ✓" else "Inaktiv / Ausstehend",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (member.valid) Color(0xFF16A34A) else Color.Red
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Event-Rabatt:", fontSize = 12.sp, color = Color.Gray)
+                                    Text("${member.eventDiscountPct} %", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Freikaffee-Guthaben:", fontSize = 12.sp, color = Color.Gray)
+                                    Text(
+                                        text = "☕ ${member.coffeeQuotaRemaining} übrig",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (member.coffeeQuotaRemaining > 0) SprachCafeRed else Color.Gray
+                                    )
+                                }
+                            }
+                        }
+
+                        if (member.coffeeQuotaRemaining > 0) {
+                            Button(
+                                onClick = {
+                                    isMemberRedeeming = true
+                                    coroutineScope.launch {
+                                        val sessId = prefs.activeSessionId ?: 1L
+                                        val res = ApiClient.redeemMemberCoffee(scannedMemberQrToken, sessId.toString())
+                                        isMemberRedeeming = false
+                                        if (res.isSuccess) {
+                                            val remaining = res.getOrDefault(member.coffeeQuotaRemaining - 1)
+                                            val tx = CashTransaction(
+                                                sessionId = sessId,
+                                                type = TransactionType.SALE,
+                                                amountCents = 0,
+                                                purpose = "☕ Freikaffee: ${member.name} (${member.memberNumber})",
+                                                donorOrMemberName = member.name
+                                            )
+                                            dbHelper.addCashTransaction(tx)
+                                            Toast.makeText(
+                                                context,
+                                                "☕ Freikaffee gebucht! Noch $remaining Kaffees übrig.",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                            showClubMemberDialog = false
+                                        } else {
+                                            Toast.makeText(
+                                                context,
+                                                "Fehler: ${res.exceptionOrNull()?.message}",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }
+                                    }
+                                },
+                                enabled = !isMemberRedeeming,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = SprachCafeRed),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                if (isMemberRedeeming) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text("☕ 1 Freikaffee einlösen (0,00 €)", fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Text(
+                                text = "Kein Freikaffee-Guthaben mehr vorhanden.",
+                                fontSize = 12.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showClubMemberDialog = false }) {
+                        Text("Schließen", fontWeight = FontWeight.Bold)
+                    }
+                }
             )
         }
 

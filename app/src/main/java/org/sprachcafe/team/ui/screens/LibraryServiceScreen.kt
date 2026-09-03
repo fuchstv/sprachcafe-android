@@ -443,19 +443,37 @@ fun LibraryServiceScreen(
         // Barcode Scanner
         if (isScannerOpen) {
             BarcodeScannerView(
-                onBarcodeScanned = { isbn ->
-                    val cleanIsbn = isbn.replace("-", "").trim()
-                    val found = booksList.find { it.isbn.replace("-", "").trim() == cleanIsbn }
-                    if (found != null) {
-                        if (found.isLent) {
-                            returnBook(found.isbn)
-                        } else {
-                            selectedBookForLoan = found
+                onBarcodeScanned = { scanned ->
+                    if (scanned.startsWith("SCP-MEMBER:")) {
+                        isScannerOpen = false
+                        coroutineScope.launch {
+                            ApiClient.verifyClubMember(scanned).onSuccess { member ->
+                                borrowerNameInput = "${member.name} (${member.memberNumber})"
+                                readerNameInput = "${member.name} (${member.memberNumber})"
+                                feeAmountCents = 0
+                                Toast.makeText(
+                                    context,
+                                    "Mitglied erkannt: ${member.name} (Hausbibliothek Flatrate 0 €)",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }.onFailure {
+                                Toast.makeText(context, "Ungültiger Mitglieds-Code", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     } else {
-                        // Create ad-hoc book for scanning
-                        val adHoc = LibraryBook(isbn = isbn, title = "Buch ISBN $isbn", author = "SprachCafé Hausbibliothek")
-                        selectedBookForLoan = adHoc
+                        val cleanIsbn = scanned.replace("-", "").trim()
+                        val found = booksList.find { it.isbn.replace("-", "").trim() == cleanIsbn }
+                        if (found != null) {
+                            if (found.isLent) {
+                                returnBook(found.isbn)
+                            } else {
+                                selectedBookForLoan = found
+                            }
+                        } else {
+                            // Create ad-hoc book for scanning
+                            val adHoc = LibraryBook(isbn = scanned, title = "Buch ISBN $scanned", author = "SprachCafé Hausbibliothek")
+                            selectedBookForLoan = adHoc
+                        }
                     }
                 },
                 onClose = { isScannerOpen = false }

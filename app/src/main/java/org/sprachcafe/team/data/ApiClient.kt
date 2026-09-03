@@ -465,4 +465,71 @@ object ApiClient {
             Result.failure(e)
         }
     }
+
+    suspend fun verifyClubMember(qrToken: String): Result<ClubMemberVerification> = withContext(Dispatchers.IO) {
+        try {
+            val encoded = java.net.URLEncoder.encode(qrToken, "UTF-8")
+            val url = URL("$BASE_URL/club-members/verify/$encoded")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "GET"
+
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(body)
+                val valid = json.optBoolean("valid", false)
+                val m = json.getJSONObject("member")
+                Result.success(
+                    ClubMemberVerification(
+                        valid = valid,
+                        id = m.getInt("id"),
+                        memberNumber = m.getString("member_number"),
+                        name = m.getString("name"),
+                        tier = m.getString("tier"),
+                        status = m.getString("status"),
+                        validUntil = m.optString("valid_until"),
+                        coffeeQuotaRemaining = m.getInt("coffee_quota_remaining"),
+                        eventDiscountPct = m.optInt("event_discount_pct", 0)
+                    )
+                )
+            } else {
+                Result.failure(Exception("HTTP ${conn.responseCode}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun redeemMemberCoffee(qrToken: String, sessionId: String?): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/club-members/redeem-coffee")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+
+            val payload = JSONObject().apply {
+                put("qrToken", qrToken)
+                if (sessionId != null) put("sessionId", sessionId)
+            }
+
+            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
+
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(body)
+                val remaining = json.optInt("remaining", 0)
+                Result.success(remaining)
+            } else {
+                val errBody = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                val msg = try { JSONObject(errBody).optString("error", "Fehler") } catch (_: Exception) { "HTTP ${conn.responseCode}" }
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

@@ -185,3 +185,15 @@ data class LibraryLoan(
     val feeCents: Int = 0,
     val status: String = "active"
 )
+
+data class ClubMemberVerification(
+    val valid: Boolean,
+    val id: Int,
+    val memberNumber: String,
+    val name: String,
+    val tier: String,
+    val status: String,
+    val validUntil: String? = null,
+    val coffeeQuotaRemaining: Int = 0,
+    val eventDiscountPct: Int = 0
+)
