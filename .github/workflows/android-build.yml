@@ -3,6 +3,8 @@ name: Build & Release SprachCafe Android APK
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -10,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Signed Android APK & AAB
+    name: Build & Test Android APK & AAB
     runs-on: ubuntu-latest
 
     steps:
@@ -26,6 +28,9 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+
+      - name: Run Unit & Robolectric Tests
+        run: ./gradlew test --no-daemon
 
       - name: Build Release APK & App Bundle (AAB)
         env:
