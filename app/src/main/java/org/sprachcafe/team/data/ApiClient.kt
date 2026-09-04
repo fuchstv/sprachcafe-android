@@ -13,7 +13,7 @@ object ApiClient {
     private const val BASE_URL = "https://team.xn--sprachcaf-j4a.org/api"
     private const val TIMEOUT_MS = 6000
 
-    suspend fun fetchTodayShifts(): Result<List<ShiftItem>> = withContext(Dispatchers.IO) {
+    suspend fun fetchTodayRoster(): Result<TodayRoster> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/shifts/today")
             val conn = url.openConnection() as HttpURLConnection
@@ -24,11 +24,14 @@ object ApiClient {
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().use { it.readText() }
                 val json = JSONObject(body)
-                val arr = json.optJSONArray("shifts") ?: JSONArray()
-                val list = mutableListOf<ShiftItem>()
-                for (i in 0 until arr.length()) {
-                    val s = arr.getJSONObject(i)
-                    list.add(
+                val date = json.optString("date", "")
+
+                // Parse shifts
+                val shiftArr = json.optJSONArray("shifts") ?: JSONArray()
+                val shiftList = mutableListOf<ShiftItem>()
+                for (i in 0 until shiftArr.length()) {
+                    val s = shiftArr.getJSONObject(i)
+                    shiftList.add(
                         ShiftItem(
                             id = s.getInt("id"),
                             date = s.getString("date"),
@@ -39,11 +42,96 @@ object ApiClient {
                             memberName = s.optString("member_display_name", s.optString("member_name_raw")),
                             memberColor = s.optString("member_color").takeIf { it.isNotEmpty() },
                             location = s.optString("location", "Schulzestraße (Pankow)"),
+                            eventId = s.optString("event_id").takeIf { it.isNotEmpty() },
+                            eventTitle = s.optString("event_title").takeIf { it.isNotEmpty() },
+                            slotId = if (s.isNull("slot_id")) null else s.optInt("slot_id"),
+                            slotRole = s.optString("slot_role").takeIf { it.isNotEmpty() },
                             notes = s.optString("notes").takeIf { it.isNotEmpty() }
                         )
                     )
                 }
-                Result.success(list)
+
+                // Parse events
+                val eventArr = json.optJSONArray("events") ?: JSONArray()
+                val eventList = mutableListOf<EventItem>()
+                for (i in 0 until eventArr.length()) {
+                    val e = eventArr.getJSONObject(i)
+                    val slotsArr = e.optJSONArray("slots") ?: JSONArray()
+                    val slotsList = mutableListOf<EventSlotItem>()
+                    for (j in 0 until slotsArr.length()) {
+                        val sl = slotsArr.getJSONObject(j)
+                        val assignedArr = sl.optJSONArray("assigned_shifts") ?: JSONArray()
+                        val assignedNames = mutableListOf<String>()
+                        for (k in 0 until assignedArr.length()) {
+                            val asObj = assignedArr.getJSONObject(k)
+                            val name = asObj.optString("member_display_name", asObj.optString("member_name_raw"))
+                            if (name.isNotEmpty()) assignedNames.add(name)
+                        }
+                        slotsList.add(
+                            EventSlotItem(
+                                id = sl.getInt("id"),
+                                eventId = sl.getString("event_id"),
+                                roleName = sl.getString("role_name"),
+                                startTime = sl.optString("start_time").takeIf { it.isNotEmpty() },
+                                endTime = sl.optString("end_time").takeIf { it.isNotEmpty() },
+                                requiredHelpers = sl.optInt("required_helpers", 1),
+                                notes = sl.optString("notes").takeIf { it.isNotEmpty() },
+                                assignedMembers = assignedNames
+                            )
+                        )
+                    }
+
+                    eventList.add(
+                        EventItem(
+                            id = e.getString("id"),
+                            summary = e.getString("summary"),
+                            description = e.optString("description").takeIf { it.isNotEmpty() },
+                            location = e.optString("location", "Schulzestr. 1, 13187 Berlin"),
+                            startTime = e.getString("start_time"),
+                            endTime = e.getString("end_time"),
+                            date = e.getString("date"),
+                            timeSlot = e.optString("time_slot").takeIf { it.isNotEmpty() },
+                            source = e.optString("source", "gcal"),
+                            slots = slotsList
+                        )
+                    )
+                }
+
+                Result.success(TodayRoster(date = date, shifts = shiftList, events = eventList))
+            } else {
+                Result.failure(Exception("HTTP ${conn.responseCode}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun fetchTodayShifts(): Result<List<ShiftItem>> = withContext(Dispatchers.IO) {
+        fetchTodayRoster().map { it.shifts }
+    }
+
+    suspend fun assignEventSlot(slotId: Int, memberName: String, memberId: Int? = null, notes: String? = null): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/events/slots/$slotId/assign")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("member_name_raw", memberName)
+                if (memberId != null) put("member_id", memberId)
+                if (!notes.isNullOrEmpty()) put("notes", notes)
+            }
+
+            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
+
+            if (conn.responseCode in 200..201) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(body)
+                Result.success(json.getInt("shiftId"))
             } else {
                 Result.failure(Exception("HTTP ${conn.responseCode}"))
             }

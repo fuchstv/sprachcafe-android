@@ -19,7 +19,46 @@ data class ShiftItem(
     val memberName: String,
     val memberColor: String? = null,
     val location: String = "Schulzestraße (Pankow)",
+    val eventId: String? = null,
+    val eventTitle: String? = null,
+    val slotId: Int? = null,
+    val slotRole: String? = null,
     val notes: String? = null
+)
+
+data class EventSlotItem(
+    val id: Int,
+    val eventId: String,
+    val roleName: String,
+    val startTime: String? = null,
+    val endTime: String? = null,
+    val requiredHelpers: Int = 1,
+    val notes: String? = null,
+    val assignedMembers: List<String> = emptyList()
+) {
+    val isFull: Boolean get() = assignedMembers.size >= requiredHelpers
+}
+
+data class EventItem(
+    val id: String,
+    val summary: String,
+    val description: String? = null,
+    val location: String = "Schulzestr. 1, 13187 Berlin",
+    val startTime: String,
+    val endTime: String,
+    val date: String,
+    val timeSlot: String? = null,
+    val source: String = "gcal",
+    val slots: List<EventSlotItem> = emptyList()
+) {
+    val startTimeFormatted: String get() = if (startTime.contains("T")) startTime.substringAfter("T").take(5) else startTime
+    val endTimeFormatted: String get() = if (endTime.contains("T")) endTime.substringAfter("T").take(5) else endTime
+}
+
+data class TodayRoster(
+    val date: String,
+    val shifts: List<ShiftItem>,
+    val events: List<EventItem>
 )
 
 enum class ItemCategory(val labelDe: String) {
