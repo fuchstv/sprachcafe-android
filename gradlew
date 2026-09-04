@@ -88,6 +88,54 @@ APP_BASE_NAME=${0##*/}
 # Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
 APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
 
+# --- Low-RAM Build Guard for SprachCafé Android ---
+IS_HEAVY_BUILD=0
+FORCE_LOCAL=0
+for arg in "$@"; do
+    case "$arg" in
+        *assemble*|*bundle*)
+            IS_HEAVY_BUILD=1
+            ;;
+        --force-local)
+            FORCE_LOCAL=1
+            ;;
+    esac
+done
+
+if [ "$IS_HEAVY_BUILD" = "1" ] && [ "$FORCE_LOCAL" = "0" ]; then
+    TOTAL_MEM_MB=8192
+    if [ -f /proc/meminfo ]; then
+        TOTAL_MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 8192)
+    fi
+    if [ "$TOTAL_MEM_MB" -lt 3500 ]; then
+        echo "" >&2
+        echo "==========================================================================" >&2
+        echo "🛑 BUILD-SPERRE: Schwerer Android-Build auf Low-RAM-Instanz (${TOTAL_MEM_MB} MB RAM)!" >&2
+        echo "==========================================================================" >&2
+        echo "Das lokale Kompilieren und Dexen (D8/R8) benötigt viel Arbeitsspeicher und" >&2
+        echo "kann diese Instanz überlasten sowie den Live-Webserver gefährden." >&2
+        echo "" >&2
+        echo "👉 Empfohlener Weg (Automatischer Cloud-Build via GitHub Actions mit 16 GB RAM):" >&2
+        echo "   Führe stattdessen das Release-Skript aus:" >&2
+        echo "   ./scripts/release.sh \"Beschreibung der Änderung\"" >&2
+        echo "" >&2
+        echo "🛠️ Falls du den Build dennoch lokal auf eigenes Risiko erzwingen willst:" >&2
+        echo "   ./gradlew $@ --force-local" >&2
+        echo "==========================================================================" >&2
+        echo "" >&2
+        exit 1
+    fi
+fi
+
+if [ "$FORCE_LOCAL" = "1" ]; then
+    for arg in "$@"; do
+        if [ "$arg" != "--force-local" ]; then
+            set -- "$@" "$arg"
+        fi
+        shift
+    done
+fi
+
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD=maximum
 
