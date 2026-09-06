@@ -483,6 +483,60 @@ object ApiClient {
         }
     }
 
+    suspend fun getActiveCashSession(): Result<JSONObject?> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/cash/sessions/active")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "GET"
+
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(body)
+                if (json.optBoolean("active", false)) {
+                    Result.success(json.optJSONObject("session"))
+                } else {
+                    Result.success(null)
+                }
+            } else {
+                Result.failure(Exception("HTTP ${conn.responseCode}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun transferCashSession(sessionId: Long, newVolunteerName: String, note: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/cash/sessions/transfer")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("sessionId", sessionId)
+                put("new_volunteer_name", newVolunteerName)
+                if (!note.isNullOrEmpty()) {
+                    put("note", note)
+                }
+            }
+
+            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
+
+            if (conn.responseCode == 200) {
+                Result.success(true)
+            } else {
+                Result.failure(Exception("HTTP ${conn.responseCode}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun submitInventory(countedBy: String, date: String, items: Map<String, Int>, notes: String?): Result<Long> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/inventory")
