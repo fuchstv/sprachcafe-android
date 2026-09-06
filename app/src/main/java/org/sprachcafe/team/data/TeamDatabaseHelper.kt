@@ -254,6 +254,39 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
         return null
     }
 
+    fun syncServerCashSession(session: CashSession) {
+        val cv = ContentValues().apply {
+            put("id", session.id)
+            put("shift_id", session.shiftId)
+            put("volunteer_name", session.volunteerName)
+            put("date", session.date)
+            put("start_time", session.startTime)
+            put("end_time", session.endTime)
+            put("opening_float_cents", session.openingFloatCents)
+            put("total_sales_cents", session.totalSalesCents)
+            put("total_donations_cents", session.totalDonationsCents)
+            put("total_library_fees_cents", session.totalLibraryFeesCents)
+            put("total_payouts_cents", session.totalPayoutsCents)
+            put("counted_total_cents", session.countedTotalCents)
+            put("diff_cents", session.diffCents)
+            put("base_retained_cents", session.baseRetainedCents)
+            put("skim_retained_cents", session.skimRetainedCents)
+            put("status", session.status)
+            put("notes", session.notes)
+        }
+        writableDatabase.insertWithOnConflict("cash_sessions", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun transferCashSession(sessionId: Long, newVolunteerName: String, note: String?) {
+        val cv = ContentValues().apply {
+            put("volunteer_name", newVolunteerName)
+            if (!note.isNullOrEmpty()) {
+                put("notes", note)
+            }
+        }
+        writableDatabase.update("cash_sessions", cv, "id = ?", arrayOf(sessionId.toString()))
+    }
+
     fun getLatestClosedFloat(): Int {
         val cursor = readableDatabase.rawQuery("SELECT base_retained_cents FROM cash_sessions WHERE status = 'closed' ORDER BY id DESC LIMIT 1", null)
         cursor.use { c ->

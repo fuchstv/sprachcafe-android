@@ -1,6 +1,7 @@
 package org.sprachcafe.team.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,6 +53,10 @@ fun ShiftStartScreen(
     var openingFloatInput by remember { mutableStateOf("50,00") }
     var suggestedFloatCents by remember { mutableStateOf(5000) }
 
+    var serverActiveSession by remember { mutableStateOf<CashSession?>(null) }
+    var showHandoverDialog by remember { mutableStateOf(false) }
+    var handoverNoteInput by remember { mutableStateOf("") }
+
     val todayDateStr = remember {
         SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).format(Date())
     }
@@ -98,6 +103,22 @@ fun ShiftStartScreen(
             ApiClient.fetchLatestFloat().onSuccess { floatCents ->
                 suggestedFloatCents = floatCents
                 openingFloatInput = String.format(Locale.GERMANY, "%.2f", floatCents / 100.0)
+            }
+
+            ApiClient.fetchActiveCashSession().onSuccess { session ->
+                serverActiveSession = session
+                if (session != null) {
+                    dbHelper.syncServerCashSession(session)
+                    val currentMember = prefs.memberName ?: ""
+                    if (session.volunteerName.equals(currentMember, ignoreCase = true)) {
+                        prefs.activeSessionId = session.id
+                        prefs.isCashActive = true
+                        prefs.openingFloatCents = session.openingFloatCents
+                        if (prefs.activeShiftStartTime.isNullOrEmpty()) {
+                            prefs.activeShiftStartTime = session.startTime
+                        }
+                    }
+                }
             }
 
             isLoading = false
@@ -158,24 +179,42 @@ fun ShiftStartScreen(
         prefs.openingFloatCents = floatCents
 
         if (takeCash) {
-            val localSessionId = dbHelper.startCashSession(
-                shiftId = shift?.id,
-                volunteerName = memberName,
-                date = todayDateStr,
-                startTime = startTime,
-                openingFloatCents = floatCents
-            )
-            prefs.activeSessionId = localSessionId
-
-            // Sync with backend asynchronously
-            coroutineScope.launch {
-                ApiClient.startCashSession(
+            val serverSession = serverActiveSession
+            if (serverSession != null) {
+                val sessId = serverSession.id
+                dbHelper.syncServerCashSession(serverSession)
+                prefs.activeSessionId = sessId
+                if (!serverSession.volunteerName.equals(memberName, ignoreCase = true)) {
+                    coroutineScope.launch {
+                        ApiClient.transferCashSession(sessId, memberName, "Schichtstart Übergabe")
+                        dbHelper.transferCashSession(sessId, memberName, "Schichtstart Übergabe")
+                    }
+                }
+            } else {
+                val localSessionId = dbHelper.startCashSession(
                     shiftId = shift?.id,
                     volunteerName = memberName,
                     date = todayDateStr,
                     startTime = startTime,
                     openingFloatCents = floatCents
                 )
+                prefs.activeSessionId = localSessionId
+
+                // Sync with backend asynchronously
+                coroutineScope.launch {
+                    val serverRes = ApiClient.startCashSession(
+                        shiftId = shift?.id,
+                        volunteerName = memberName,
+                        date = todayDateStr,
+                        startTime = startTime,
+                        openingFloatCents = floatCents
+                    )
+                    serverRes.onSuccess { sId ->
+                        if (sId > 0) {
+                            prefs.activeSessionId = sId
+                        }
+                    }
+                }
             }
 
             // Schedule alarm 15 min before shift end
@@ -291,6 +330,63 @@ fun ShiftStartScreen(
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Zur Kasse", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            // Server Active Cash Session Banner (if someone else opened it)
+            if (serverActiveSession != null && !(serverActiveSession?.volunteerName.equals(prefs.memberName, ignoreCase = true))) {
+                val otherSession = serverActiveSession!!
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB)),
+                    border = BorderStroke(1.dp, Color(0xFFFCD34D))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PointOfSale,
+                                contentDescription = null,
+                                tint = Color(0xFFD97706),
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Text(
+                                text = "Kasse bereits geöffnet",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF92400E),
+                                fontSize = 15.sp
+                            )
+                        }
+                        Text(
+                            text = "Geöffnet von: ${otherSession.volunteerName} (seit ${otherSession.startTime ?: "--:--"} Uhr)\nAktueller Saldo: ${String.format(Locale.GERMANY, "%.2f €", ((otherSession.expectedTotalCents ?: otherSession.openingFloatCents) / 100.0))}",
+                            color = Color(0xFF78350F),
+                            fontSize = 13.sp
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Button(
+                                onClick = { showHandoverDialog = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SwapHoriz,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Kasse übernehmen (Übergabe)", fontSize = 12.sp)
+                            }
                         }
                     }
                 }
@@ -778,29 +874,51 @@ fun ShiftStartScreen(
                             color = Color(0xFF4B5563)
                         )
 
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFAF5EB)),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(
-                                    text = "Vorgeschlagener Anfangsbestand:",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF78350F)
-                                )
-                                OutlinedTextField(
-                                    value = openingFloatInput,
-                                    onValueChange = { openingFloatInput = it },
-                                    label = { Text("Anfangsbestand (€)") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Text(
-                                    text = "Standard: 50,00 € Wechselgeldsockel",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF92400E)
-                                )
+                        if (serverActiveSession != null) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF6FF)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "ℹ️ Auf dem Server läuft bereits Kassensitzung #${serverActiveSession?.id} (${serverActiveSession?.volunteerName}).",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF1E40AF)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Mit Schichtstart wird diese Sitzung direkt fortgeführt bzw. auf dich übertragen.",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF1E3A8A)
+                                    )
+                                }
+                            }
+                        } else {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFAF5EB)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "Vorgeschlagener Anfangsbestand:",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF78350F)
+                                    )
+                                    OutlinedTextField(
+                                        value = openingFloatInput,
+                                        onValueChange = { openingFloatInput = it },
+                                        label = { Text("Anfangsbestand (€)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Text(
+                                        text = "Standard: 50,00 € Wechselgeldsockel",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF92400E)
+                                    )
+                                }
                             }
                         }
                     }
@@ -889,6 +1007,81 @@ fun ShiftStartScreen(
                 confirmButton = {
                     TextButton(onClick = { showMemberPicker = false }) {
                         Text("Schließen")
+                    }
+                }
+            )
+        }
+
+        // Dialog: Kasse von anderem Helfer übernehmen
+        if (showHandoverDialog && serverActiveSession != null) {
+            val curSess = serverActiveSession!!
+            val myName = prefs.memberName ?: "Ehrenamtlicher"
+            AlertDialog(
+                onDismissRequest = { showHandoverDialog = false },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.SwapHoriz,
+                        contentDescription = null,
+                        tint = SprachCafeRed,
+                        modifier = Modifier.size(36.dp)
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Kasse von ${curSess.volunteerName} übernehmen?",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Die aktive Kassensitzung #${curSess.id} wird an dich ($myName) übertragen. Der laufende Saldo und alle Buchungen bleiben vollständig erhalten.",
+                            fontSize = 14.sp,
+                            color = Color(0xFF4B5563)
+                        )
+                        OutlinedTextField(
+                            value = handoverNoteInput,
+                            onValueChange = { handoverNoteInput = it },
+                            label = { Text("Notiz / Übergabezählung (optional)") },
+                            placeholder = { Text("z.B. Wechselgeld gezählt: 73,50 €") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
+                                isLoading = true
+                                val note = handoverNoteInput.trim().ifEmpty { null }
+                                val res = ApiClient.transferCashSession(curSess.id, myName, note)
+                                res.onSuccess {
+                                    dbHelper.transferCashSession(curSess.id, myName, note)
+                                    prefs.activeSessionId = curSess.id
+                                    prefs.isCashActive = true
+                                    prefs.openingFloatCents = curSess.openingFloatCents
+                                    if (prefs.activeShiftStartTime.isNullOrEmpty()) {
+                                        prefs.activeShiftStartTime = curSess.startTime
+                                    }
+                                    showHandoverDialog = false
+                                    Toast.makeText(context, "Kasse von ${curSess.volunteerName} übernommen!", Toast.LENGTH_SHORT).show()
+                                    reloadData()
+                                    onShiftStarted()
+                                }.onFailure { err ->
+                                    Toast.makeText(context, "Übergabe fehlgeschlagen: ${err.message}", Toast.LENGTH_LONG).show()
+                                }
+                                isLoading = false
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = SprachCafeRed)
+                    ) {
+                        Text("Jetzt übernehmen")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showHandoverDialog = false }) {
+                        Text("Abbrechen", color = Color(0xFF6B7280))
                     }
                 }
             )

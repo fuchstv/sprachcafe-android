@@ -53,6 +53,15 @@ fun CashCountScreen(
 
     fun refreshSession() {
         session = dbHelper.getActiveCashSession()
+        coroutineScope.launch {
+            ApiClient.fetchActiveCashSession().onSuccess { serverSession ->
+                if (serverSession != null) {
+                    dbHelper.syncServerCashSession(serverSession)
+                    session = serverSession
+                    prefs.activeSessionId = serverSession.id
+                }
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -153,6 +162,11 @@ fun CashCountScreen(
                             fontSize = 15.sp,
                             color = Color(0xFF1F2937)
                         )
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Kassenführung:", color = Color.Gray, fontSize = 13.sp)
+                            Text(session?.volunteerName ?: prefs.memberName ?: "Ehrenamtlicher", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        }
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Anfangsbestand:", color = Color.Gray, fontSize = 13.sp)

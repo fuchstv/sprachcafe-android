@@ -507,6 +507,54 @@ object ApiClient {
         }
     }
 
+    suspend fun fetchActiveCashSession(): Result<CashSession?> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/cash/sessions/active")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "GET"
+
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(body)
+                if (json.optBoolean("active", false)) {
+                    val s = json.optJSONObject("session")
+                    if (s != null) {
+                        val session = CashSession(
+                            id = s.getLong("id"),
+                            shiftId = if (s.isNull("shift_id")) null else s.optInt("shift_id"),
+                            volunteerName = s.getString("volunteer_name"),
+                            date = s.getString("date"),
+                            startTime = s.optString("start_time").takeIf { it.isNotEmpty() },
+                            endTime = s.optString("end_time").takeIf { it.isNotEmpty() },
+                            openingFloatCents = s.optInt("opening_float_cents", 5000),
+                            totalSalesCents = s.optInt("live_sales_cents", s.optInt("total_sales_cents", 0)),
+                            totalDonationsCents = s.optInt("live_donations_cents", s.optInt("total_donations_cents", 0)),
+                            totalLibraryFeesCents = s.optInt("live_library_fees_cents", s.optInt("total_library_fees_cents", 0)),
+                            totalPayoutsCents = s.optInt("live_payouts_cents", s.optInt("total_payouts_cents", 0)),
+                            countedTotalCents = if (s.isNull("counted_total_cents")) null else s.optInt("counted_total_cents"),
+                            diffCents = if (s.isNull("diff_cents")) null else s.optInt("diff_cents"),
+                            baseRetainedCents = s.optInt("base_retained_cents", 5000),
+                            skimRetainedCents = s.optInt("skim_retained_cents", 0),
+                            status = s.optString("status", "open"),
+                            notes = s.optString("notes").takeIf { it.isNotEmpty() }
+                        )
+                        Result.success(session)
+                    } else {
+                        Result.success(null)
+                    }
+                } else {
+                    Result.success(null)
+                }
+            } else {
+                Result.failure(Exception("HTTP ${conn.responseCode}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun transferCashSession(sessionId: Long, newVolunteerName: String, note: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/sessions/transfer")

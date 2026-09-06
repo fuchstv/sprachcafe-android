@@ -103,6 +103,14 @@ fun KioskScreen(
                 dbHelper.saveKioskItems(fetched)
                 itemsList = dbHelper.getAllKioskItems()
             }
+            ApiClient.fetchActiveCashSession().onSuccess { serverSession ->
+                if (serverSession != null) {
+                    dbHelper.syncServerCashSession(serverSession)
+                    activeSession = serverSession
+                    prefs.activeSessionId = serverSession.id
+                    prefs.isCashActive = true
+                }
+            }
         }
     }
 
@@ -352,11 +360,44 @@ fun KioskScreen(
                         fontWeight = FontWeight.Bold,
                         color = SprachCafeRed
                     )
-                    Text(
-                        text = if (prefs.isCashActive) "Kasse aktiv • Helfer: ${prefs.memberName ?: "--"}" else "Schicht ohne Kasse",
-                        fontSize = 12.sp,
-                        color = if (prefs.isCashActive) Color(0xFF059669) else Color(0xFF6B7280)
-                    )
+                    val sessionOwner = activeSession?.volunteerName ?: prefs.memberName
+                    val isOtherOwner = activeSession != null && prefs.memberName != null && !activeSession?.volunteerName.equals(prefs.memberName, ignoreCase = true)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = if (prefs.isCashActive || activeSession != null) "Kasse aktiv • $sessionOwner" else "Schicht ohne Kasse",
+                            fontSize = 12.sp,
+                            color = if (prefs.isCashActive || activeSession != null) Color(0xFF059669) else Color(0xFF6B7280)
+                        )
+                        if (isOtherOwner) {
+                            Surface(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val myName = prefs.memberName ?: "Ehrenamtlicher"
+                                        val curId = activeSession!!.id
+                                        ApiClient.transferCashSession(curId, myName, "Übergabe Theke")
+                                            .onSuccess {
+                                                dbHelper.transferCashSession(curId, myName, "Übergabe Theke")
+                                                Toast.makeText(context, "Kasse auf $myName übertragen!", Toast.LENGTH_SHORT).show()
+                                                refreshItems()
+                                            }
+                                    }
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                color = Color(0xFFFEF3C7)
+                            ) {
+                                Text(
+                                    text = "Übernehmen",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF92400E),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

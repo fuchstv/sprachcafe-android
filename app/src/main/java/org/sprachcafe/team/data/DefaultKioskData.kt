@@ -8,8 +8,8 @@ object DefaultKioskData {
             name = "Mate-Limo",
             category = ItemCategory.COLD_DRINKS,
             unit = "Flasche",
-            priceCents = 300,
-            costCents = 120,
+            priceCents = 250,
+            costCents = 100,
             taxSphere = "Wirtschaftl. Geschäftsbetrieb",
             barcode = "4029764001807",
             icon = "🧉"
