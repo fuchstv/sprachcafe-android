@@ -190,6 +190,8 @@ object ApiClient {
                     val item = arr.getJSONObject(i)
                     val catName = item.getString("category")
                     val cat = try { ItemCategory.valueOf(catName) } catch (e: Exception) { ItemCategory.COLD_DRINKS }
+                    val defaultTrack = cat != ItemCategory.HOT_DRINKS && cat != ItemCategory.DONATIONS
+                    val trackInv = if (item.has("track_inventory")) (item.optInt("track_inventory", if (defaultTrack) 1 else 0) == 1) else defaultTrack
                     list.add(
                         KioskItem(
                             id = item.getString("id"),
@@ -202,7 +204,8 @@ object ApiClient {
                             barcode = item.optString("barcode").takeIf { it.isNotEmpty() },
                             icon = item.optString("icon", "☕"),
                             isActive = item.optInt("is_active", 1) == 1,
-                            stockQuantity = item.optInt("stock_quantity", 0)
+                            stockQuantity = item.optInt("stock_quantity", 0),
+                            trackInventory = trackInv
                         )
                     )
                 }
@@ -352,6 +355,58 @@ object ApiClient {
                 put("barcode", item.barcode)
                 put("icon", item.icon)
                 put("is_active", if (item.isActive) 1 else 0)
+                put("track_inventory", if (item.trackInventory) 1 else 0)
+            }
+            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
+            if (conn.responseCode in 200..204) Result.success(true)
+            else Result.failure(Exception("HTTP ${conn.responseCode}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun submitDetailedInventorySync(
+        items: List<InventorySyncItem>,
+        countedBy: String,
+        notes: String? = null,
+        location: String = "Schulzestraße (Pankow)"
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$BASE_URL/stock/inventory-sync")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+
+            val itemsArr = JSONArray()
+            for (syncItem in items) {
+                val itemObj = JSONObject().apply {
+                    put("itemId", syncItem.itemId)
+                    put("countedQty", syncItem.countedQty)
+                    if (!syncItem.batches.isNullOrEmpty()) {
+                        val batchArr = JSONArray()
+                        for (b in syncItem.batches) {
+                            val bObj = JSONObject().apply {
+                                if (b.batchId != null) put("batchId", b.batchId)
+                                if (!b.batchNumber.isNullOrEmpty()) put("batchNumber", b.batchNumber)
+                                put("quantity", b.quantity)
+                                if (!b.mhdDate.isNullOrEmpty()) put("mhdDate", b.mhdDate)
+                            }
+                            batchArr.put(bObj)
+                        }
+                        put("batches", batchArr)
+                    }
+                }
+                itemsArr.put(itemObj)
+            }
+
+            val payload = JSONObject().apply {
+                put("items", itemsArr)
+                put("countedBy", countedBy)
+                put("notes", notes)
+                put("location", location)
             }
             OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
             if (conn.responseCode in 200..204) Result.success(true)

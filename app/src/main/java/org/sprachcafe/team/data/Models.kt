@@ -80,11 +80,25 @@ data class KioskItem(
     val barcode: String? = null,
     val icon: String = "☕",
     val isActive: Boolean = true,
-    val stockQuantity: Int = 0
+    val stockQuantity: Int = 0,
+    val trackInventory: Boolean = true
 ) {
     val priceEurFormatted: String
         get() = String.format("%.2f €", priceCents / 100.0)
 }
+
+data class InventoryBatchEntry(
+    val batchId: Long? = null,
+    val batchNumber: String? = null,
+    var quantity: Int = 0,
+    var mhdDate: String? = null
+)
+
+data class InventorySyncItem(
+    val itemId: String,
+    val countedQty: Int,
+    val batches: List<InventoryBatchEntry>? = null
+)
 
 data class CartItem(
     val item: KioskItem,

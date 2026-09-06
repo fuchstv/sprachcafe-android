@@ -10,7 +10,7 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
 
     companion object {
         const val DATABASE_NAME = "sprachcafe_team.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
 
         @Volatile
         private var instance: TeamDatabaseHelper? = null
@@ -36,7 +36,8 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 barcode TEXT,
                 icon TEXT DEFAULT '☕',
                 is_active INTEGER NOT NULL DEFAULT 1,
-                stock_quantity INTEGER DEFAULT 0
+                stock_quantity INTEGER DEFAULT 0,
+                track_inventory INTEGER NOT NULL DEFAULT 1
             );
         """.trimIndent())
 
@@ -127,13 +128,13 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS kiosk_items")
-        db.execSQL("DROP TABLE IF EXISTS cash_sessions")
-        db.execSQL("DROP TABLE IF EXISTS cash_transactions")
-        db.execSQL("DROP TABLE IF EXISTS library_books")
-        db.execSQL("DROP TABLE IF EXISTS library_loans")
-        db.execSQL("DROP TABLE IF EXISTS cached_shifts")
-        onCreate(db)
+        if (oldVersion < 3) {
+            try {
+                db.execSQL("ALTER TABLE kiosk_items ADD COLUMN track_inventory INTEGER NOT NULL DEFAULT 1")
+            } catch (e: Exception) {
+                // column might already exist
+            }
+        }
     }
 
     private fun seedDefaultKioskItems(db: SQLiteDatabase) {
@@ -150,6 +151,7 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 put("icon", item.icon)
                 put("is_active", if (item.isActive) 1 else 0)
                 put("stock_quantity", item.stockQuantity)
+                put("track_inventory", if (item.trackInventory) 1 else 0)
             }
             db.insertWithOnConflict("kiosk_items", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
         }
@@ -183,6 +185,7 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                     put("icon", item.icon)
                     put("is_active", if (item.isActive) 1 else 0)
                     put("stock_quantity", item.stockQuantity)
+                    put("track_inventory", if (item.trackInventory) 1 else 0)
                 }
                 writableDatabase.insertWithOnConflict("kiosk_items", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
             }
@@ -206,6 +209,8 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
     private fun cursorToKioskItem(c: Cursor): KioskItem {
         val catName = c.getString(c.getColumnIndexOrThrow("category"))
         val category = try { ItemCategory.valueOf(catName) } catch (e: Exception) { ItemCategory.COLD_DRINKS }
+        val trackInvCol = c.getColumnIndex("track_inventory")
+        val trackInventory = if (trackInvCol >= 0) c.getInt(trackInvCol) == 1 else (category != ItemCategory.HOT_DRINKS && category != ItemCategory.DONATIONS)
         return KioskItem(
             id = c.getString(c.getColumnIndexOrThrow("id")),
             name = c.getString(c.getColumnIndexOrThrow("name")),
@@ -217,7 +222,8 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
             barcode = c.getString(c.getColumnIndexOrThrow("barcode")),
             icon = c.getString(c.getColumnIndexOrThrow("icon")),
             isActive = c.getInt(c.getColumnIndexOrThrow("is_active")) == 1,
-            stockQuantity = c.getInt(c.getColumnIndexOrThrow("stock_quantity"))
+            stockQuantity = c.getInt(c.getColumnIndexOrThrow("stock_quantity")),
+            trackInventory = trackInventory
         )
     }
 

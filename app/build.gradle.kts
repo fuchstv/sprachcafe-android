@@ -12,8 +12,8 @@ android {
         applicationId = "org.sprachcafe.team"
         minSdk = 24
         targetSdk = 34
-        versionCode = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 1
-        versionName = "1.0.${System.getenv("BUILD_NUMBER") ?: "0"}"
+        versionCode = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 2
+        versionName = "1.0.${System.getenv("BUILD_NUMBER") ?: "1"}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -67,7 +67,8 @@ object DefaultKioskData {
             priceCents = 250,
             costCents = 40,
             taxSphere = "Zweckbetrieb / Kiosk",
-            icon = "☕"
+            icon = "☕",
+            trackInventory = false
         ),
         KioskItem(
             id = "item-07",
@@ -77,7 +78,8 @@ object DefaultKioskData {
             priceCents = 350,
             costCents = 70,
             taxSphere = "Zweckbetrieb / Kiosk",
-            icon = "☕"
+            icon = "☕",
+            trackInventory = false
         ),
         KioskItem(
             id = "item-08",
@@ -87,7 +89,8 @@ object DefaultKioskData {
             priceCents = 200,
             costCents = 30,
             taxSphere = "Zweckbetrieb / Kiosk",
-            icon = "🫖"
+            icon = "🫖",
+            trackInventory = false
         ),
         KioskItem(
             id = "item-09",
@@ -97,7 +100,8 @@ object DefaultKioskData {
             priceCents = 400,
             costCents = 90,
             taxSphere = "Zweckbetrieb / Kiosk",
-            icon = "🍫"
+            icon = "🍫",
+            trackInventory = false
         ),
 
         // Snacks & Gebäck
@@ -184,7 +188,8 @@ object DefaultKioskData {
             priceCents = 200,
             costCents = 0,
             taxSphere = "Ideeller Bereich / Spende",
-            icon = "💛"
+            icon = "💛",
+            trackInventory = false
         ),
         KioskItem(
             id = "item-18",
@@ -194,7 +199,8 @@ object DefaultKioskData {
             priceCents = 100,
             costCents = 0,
             taxSphere = "Ideeller Bereich / Spende",
-            icon = "☕"
+            icon = "☕",
+            trackInventory = false
         )
     )
 }
