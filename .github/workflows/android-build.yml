@@ -37,6 +37,7 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'sprachcafe2026' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'sprachcafe2026' }}
+          TEAM_API_KEY: ${{ secrets.TEAM_API_KEY }}
         run: ./gradlew assembleRelease bundleRelease --no-daemon
 
       - name: Upload Build Artifacts (APK & AAB)

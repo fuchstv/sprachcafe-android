@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -7,6 +9,18 @@ plugins {
 android {
     namespace = "org.sprachcafe.team"
     compileSdk = 34
+
+    val localProperties = Properties().apply {
+        val localPropertiesFile = rootProject.file("local.properties")
+        if (localPropertiesFile.exists()) {
+            localPropertiesFile.inputStream().use { stream ->
+                this@apply.load(stream)
+            }
+        }
+    }
+    val teamApiKey = (project.findProperty("TEAM_API_KEY") as? String)
+        ?: localProperties.getProperty("TEAM_API_KEY")
+        ?: (System.getenv("TEAM_API_KEY") ?: "")
 
     defaultConfig {
         applicationId = "org.sprachcafe.team"
@@ -19,6 +33,7 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        buildConfigField("String", "TEAM_API_KEY", "\"$teamApiKey\"")
     }
 
     signingConfigs {
@@ -55,6 +70,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

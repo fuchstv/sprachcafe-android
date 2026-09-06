@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.sprachcafe.team.BuildConfig
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
@@ -13,12 +14,21 @@ object ApiClient {
     private const val BASE_URL = "https://team.xn--sprachcaf-j4a.org/api"
     private const val TIMEOUT_MS = 6000
 
+    private fun openConnection(url: URL): HttpURLConnection {
+        val conn = url.openConnection() as HttpURLConnection
+        conn.connectTimeout = TIMEOUT_MS
+        conn.readTimeout = TIMEOUT_MS
+        val token = BuildConfig.TEAM_API_KEY
+        if (token.isNotEmpty()) {
+            conn.setRequestProperty("X-App-Token", token)
+        }
+        return conn
+    }
+
     suspend fun fetchTodayRoster(): Result<TodayRoster> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/shifts/today")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "GET"
 
             if (conn.responseCode == 200) {
@@ -113,9 +123,7 @@ object ApiClient {
     suspend fun assignEventSlot(slotId: Int, memberName: String, memberId: Int? = null, notes: String? = null): Result<Int> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/events/slots/$slotId/assign")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -143,9 +151,7 @@ object ApiClient {
     suspend fun fetchMembers(): Result<List<TeamMember>> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/members")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
 
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -177,9 +183,7 @@ object ApiClient {
     suspend fun fetchArticles(): Result<List<KioskItem>> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/articles")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
 
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -221,9 +225,7 @@ object ApiClient {
     suspend fun fetchLatestFloat(): Result<Int> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/latest-float")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
 
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -240,9 +242,7 @@ object ApiClient {
     suspend fun startCashSession(shiftId: Int?, volunteerName: String, date: String, startTime: String?, openingFloatCents: Int): Result<Long> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/sessions/start")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -280,9 +280,7 @@ object ApiClient {
     ): Result<Long> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/sessions/$sessionId/transaction")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -315,9 +313,7 @@ object ApiClient {
     suspend fun linkBarcode(itemId: String, barcode: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/articles/link-barcode")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -337,9 +333,7 @@ object ApiClient {
     suspend fun saveArticle(item: KioskItem): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/articles")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -373,9 +367,7 @@ object ApiClient {
     ): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/stock/inventory-sync")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -424,9 +416,7 @@ object ApiClient {
     ): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/stock/inventory-sync")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -451,9 +441,7 @@ object ApiClient {
     suspend fun closeCashSession(sessionId: Long, countedCents: Int, diffCents: Int, baseCents: Int, skimCents: Int, salesCents: Int, donationsCents: Int, libraryFeesCents: Int, payoutsCents: Int, expectedCents: Int, notes: String?): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/sessions/$sessionId/close")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -486,9 +474,7 @@ object ApiClient {
     suspend fun getActiveCashSession(): Result<JSONObject?> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/sessions/active")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "GET"
 
             if (conn.responseCode == 200) {
@@ -510,9 +496,7 @@ object ApiClient {
     suspend fun fetchActiveCashSession(): Result<CashSession?> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/sessions/active")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "GET"
 
             if (conn.responseCode == 200) {
@@ -558,9 +542,7 @@ object ApiClient {
     suspend fun transferCashSession(sessionId: Long, newVolunteerName: String, note: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/cash/sessions/transfer")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -588,9 +570,7 @@ object ApiClient {
     suspend fun submitInventory(countedBy: String, date: String, items: Map<String, Int>, notes: String?): Result<Long> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/inventory")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -620,9 +600,7 @@ object ApiClient {
         try {
             val qParam = if (!query.isNullOrBlank()) "?q=${java.net.URLEncoder.encode(query, "UTF-8")}" else ""
             val url = URL("$BASE_URL/library/books$qParam")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
 
             if (conn.responseCode == 200) {
                 val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -656,9 +634,7 @@ object ApiClient {
     suspend fun borrowBook(isbn: String, title: String, borrowerName: String, borrowerContact: String?, feeCents: Int): Result<String> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/library/loans")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -688,9 +664,7 @@ object ApiClient {
     suspend fun returnBook(isbn: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/library/return")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
@@ -715,9 +689,7 @@ object ApiClient {
         try {
             val encoded = java.net.URLEncoder.encode(qrToken, "UTF-8")
             val url = URL("$BASE_URL/club-members/verify/$encoded")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "GET"
 
             if (conn.responseCode == 200) {
@@ -749,9 +721,7 @@ object ApiClient {
     suspend fun redeemMemberCoffee(qrToken: String, sessionId: String?): Result<Int> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/club-members/redeem-coffee")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            val conn = openConnection(url)
             conn.requestMethod = "POST"
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
