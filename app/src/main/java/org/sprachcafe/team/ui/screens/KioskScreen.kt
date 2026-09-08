@@ -376,7 +376,11 @@ fun KioskScreen(
                             Surface(
                                 onClick = {
                                     coroutineScope.launch {
-                                        val myName = prefs.memberName ?: "Ehrenamtlicher"
+                                        val myName = prefs.memberName
+                                        if (myName.isNullOrEmpty()) {
+                                            Toast.makeText(context, "Bitte wähle zuerst deinen Namen im Schicht-Start!", Toast.LENGTH_LONG).show()
+                                            return@launch
+                                        }
                                         val curId = activeSession!!.id
                                         ApiClient.transferCashSession(curId, myName, "Übergabe Theke")
                                             .onSuccess {

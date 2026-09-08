@@ -97,9 +97,15 @@ fun InventoryScreen(
             return
         }
 
+        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).apply {
+            timeZone = TimeZone.getTimeZone("Europe/Berlin")
+        }.format(Date())
+        val volunteer = prefs.memberName
+        if (volunteer.isNullOrEmpty()) {
+            Toast.makeText(context, "Bitte wähle zuerst im Schicht-Start deinen Namen aus!", Toast.LENGTH_LONG).show()
+            return
+        }
         isSubmitting = true
-        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).format(Date())
-        val volunteer = prefs.memberName ?: "Ehrenamtlicher"
 
         val syncItems = countedQuantities.map { (itemId, totalQty) ->
             val batches = itemBatches[itemId]?.filter { it.quantity > 0 }

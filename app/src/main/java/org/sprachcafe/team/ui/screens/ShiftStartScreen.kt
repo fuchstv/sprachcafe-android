@@ -58,10 +58,14 @@ fun ShiftStartScreen(
     var handoverNoteInput by remember { mutableStateOf("") }
 
     val todayDateStr = remember {
-        SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).format(Date())
+        SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).apply {
+            timeZone = TimeZone.getTimeZone("Europe/Berlin")
+        }.format(Date())
     }
     val todayReadable = remember {
-        SimpleDateFormat("EEEE, dd. MMMM yyyy", Locale.GERMANY).format(Date())
+        SimpleDateFormat("EEEE, dd. MMMM yyyy", Locale.GERMANY).apply {
+            timeZone = TimeZone.getTimeZone("Europe/Berlin")
+        }.format(Date())
     }
 
     // Load shifts and members
@@ -89,14 +93,9 @@ fun ShiftStartScreen(
 
             ApiClient.fetchMembers().onSuccess { members ->
                 allMembers = members
-                // Auto-detect member if not set
+                // Prompt to select member if not set yet (do NOT auto-select first member)
                 if (prefs.memberName.isNullOrEmpty() && members.isNotEmpty()) {
-                    val defaultM = members.firstOrNull()
-                    if (defaultM != null) {
-                        prefs.memberName = defaultM.name
-                        prefs.memberCode = defaultM.shortCode
-                        prefs.memberColor = defaultM.color
-                    }
+                    showMemberPicker = true
                 }
             }
 
@@ -126,7 +125,12 @@ fun ShiftStartScreen(
     }
 
     fun claimSlotAndStart(slot: EventSlotItem, event: EventItem) {
-        val memberName = prefs.memberName ?: "Ehrenamtlicher"
+        if (prefs.memberName.isNullOrEmpty()) {
+            Toast.makeText(context, "Bitte wähle zuerst deinen Namen aus (oben rechts auf 'Helfer wählen')!", Toast.LENGTH_LONG).show()
+            showMemberPicker = true
+            return
+        }
+        val memberName = prefs.memberName!!
         val memberId = allMembers.find { it.name.equals(memberName, ignoreCase = true) || it.shortCode.equals(prefs.memberCode, ignoreCase = true) }?.id
 
         coroutineScope.launch {
@@ -167,9 +171,17 @@ fun ShiftStartScreen(
     }
 
     fun startShiftWithCash(takeCash: Boolean, floatCents: Int) {
+        if (prefs.memberName.isNullOrEmpty()) {
+            Toast.makeText(context, "Bitte wähle zuerst deinen Namen aus (oben rechts auf 'Helfer wählen')!", Toast.LENGTH_LONG).show()
+            showMemberPicker = true
+            return
+        }
         val shift = selectedShift
-        val memberName = prefs.memberName ?: "Ehrenamtlicher"
-        val startTime = shift?.startTime ?: SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date())
+        val memberName = prefs.memberName!!
+        val timeFormat = SimpleDateFormat("HH:mm", Locale.GERMANY).apply {
+            timeZone = TimeZone.getTimeZone("Europe/Berlin")
+        }
+        val startTime = shift?.startTime ?: timeFormat.format(Date())
         val endTime = shift?.endTime ?: "18:00"
 
         prefs.activeShiftId = shift?.id
@@ -429,13 +441,21 @@ fun ShiftStartScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = {
+                                if (prefs.memberName.isNullOrEmpty()) {
+                                    Toast.makeText(context, "Bitte wähle zuerst deinen Namen aus (oben rechts auf 'Helfer wählen')!", Toast.LENGTH_LONG).show()
+                                    showMemberPicker = true
+                                    return@Button
+                                }
+                                val timeFormat = SimpleDateFormat("HH:mm", Locale.GERMANY).apply {
+                                    timeZone = TimeZone.getTimeZone("Europe/Berlin")
+                                }
                                 selectedShift = ShiftItem(
                                     id = 0,
                                     date = todayDateStr,
                                     timeSlot = "adhoc",
-                                    startTime = SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date()),
+                                    startTime = timeFormat.format(Date()),
                                     endTime = "18:00",
-                                    memberName = prefs.memberName ?: "Ehrenamtlicher"
+                                    memberName = prefs.memberName!!
                                 )
                                 showCashDialog = true
                             },
@@ -821,13 +841,21 @@ fun ShiftStartScreen(
                     item {
                         OutlinedButton(
                             onClick = {
+                                if (prefs.memberName.isNullOrEmpty()) {
+                                    Toast.makeText(context, "Bitte wähle zuerst deinen Namen aus (oben rechts auf 'Helfer wählen')!", Toast.LENGTH_LONG).show()
+                                    showMemberPicker = true
+                                    return@OutlinedButton
+                                }
+                                val timeFormat = SimpleDateFormat("HH:mm", Locale.GERMANY).apply {
+                                    timeZone = TimeZone.getTimeZone("Europe/Berlin")
+                                }
                                 selectedShift = ShiftItem(
                                     id = 0,
                                     date = todayDateStr,
                                     timeSlot = "adhoc",
-                                    startTime = SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date()),
+                                    startTime = timeFormat.format(Date()),
                                     endTime = "18:00",
-                                    memberName = prefs.memberName ?: "Ehrenamtlicher"
+                                    memberName = prefs.memberName!!
                                 )
                                 showCashDialog = true
                             },
