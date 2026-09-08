@@ -119,8 +119,9 @@ fun KioskScreen(
     }
 
     val filteredItems = remember(selectedCategory, itemsList) {
-        if (selectedCategory == null) itemsList
-        else itemsList.filter { it.category == selectedCategory }
+        val activeItems = itemsList.filter { it.category != ItemCategory.DONATIONS && it.id != "item-17" && it.id != "item-18" }
+        if (selectedCategory == null) activeItems
+        else activeItems.filter { it.category == selectedCategory }
     }
 
     val totalCents = remember(cart, itemsList) {
@@ -451,7 +452,7 @@ fun KioskScreen(
                         label = { Text("Alle Artikel") }
                     )
                 }
-                items(ItemCategory.values()) { cat ->
+                items(ItemCategory.values().filter { it != ItemCategory.DONATIONS }) { cat ->
                     FilterChip(
                         selected = selectedCategory == cat,
                         onClick = { selectedCategory = cat },

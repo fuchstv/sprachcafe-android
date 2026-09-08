@@ -10,7 +10,7 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
 
     companion object {
         const val DATABASE_NAME = "sprachcafe_team.db"
-        const val DATABASE_VERSION = 3
+        const val DATABASE_VERSION = 4
 
         @Volatile
         private var instance: TeamDatabaseHelper? = null
@@ -135,6 +135,13 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 // column might already exist
             }
         }
+        if (oldVersion < 4) {
+            try {
+                db.execSQL("DELETE FROM kiosk_items WHERE id IN ('item-17', 'item-18') OR category = 'DONATIONS'")
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
     }
 
     private fun seedDefaultKioskItems(db: SQLiteDatabase) {
@@ -160,7 +167,7 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
     // --- Kiosk Items DAO ---
     fun getAllKioskItems(): List<KioskItem> {
         val list = mutableListOf<KioskItem>()
-        val cursor = readableDatabase.rawQuery("SELECT * FROM kiosk_items WHERE is_active = 1 ORDER BY category ASC, name ASC", null)
+        val cursor = readableDatabase.rawQuery("SELECT * FROM kiosk_items WHERE is_active = 1 AND id NOT IN ('item-17', 'item-18') AND category != 'DONATIONS' ORDER BY category ASC, name ASC", null)
         cursor.use { c ->
             while (c.moveToNext()) {
                 list.add(cursorToKioskItem(c))
@@ -172,7 +179,12 @@ class TeamDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
     fun saveKioskItems(items: List<KioskItem>) {
         writableDatabase.beginTransaction()
         try {
+            // Purge obsolete items that are no longer part of active catalog
+            writableDatabase.execSQL("DELETE FROM kiosk_items WHERE id IN ('item-17', 'item-18') OR category = 'DONATIONS'")
             for (item in items) {
+                if (item.id == "item-17" || item.id == "item-18" || item.category == ItemCategory.DONATIONS) {
+                    continue
+                }
                 val cv = ContentValues().apply {
                     put("id", item.id)
                     put("name", item.name)

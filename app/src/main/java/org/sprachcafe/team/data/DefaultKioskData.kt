@@ -177,30 +177,7 @@ object DefaultKioskData {
             costCents = 420,
             taxSphere = "Zweckbetrieb / Merch",
             icon = "🎴"
-        ),
-
-        // Spenden & Sonstiges
-        KioskItem(
-            id = "item-17",
-            name = "Spende (Bücher / Kiez)",
-            category = ItemCategory.DONATIONS,
-            unit = "Vorgang",
-            priceCents = 200,
-            costCents = 0,
-            taxSphere = "Ideeller Bereich / Spende",
-            icon = "💛",
-            trackInventory = false
-        ),
-        KioskItem(
-            id = "item-18",
-            name = "Kaffee-Kasse freiwillig",
-            category = ItemCategory.DONATIONS,
-            unit = "Vorgang",
-            priceCents = 100,
-            costCents = 0,
-            taxSphere = "Ideeller Bereich / Spende",
-            icon = "☕",
-            trackInventory = false
         )
     )
 }
+

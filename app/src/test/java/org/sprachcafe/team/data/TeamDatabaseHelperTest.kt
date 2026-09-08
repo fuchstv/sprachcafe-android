@@ -101,4 +101,39 @@ class TeamDatabaseHelperTest {
         val results = dbHelper.searchBooks("  Test  ")
         assertEquals(2, results.size) // Matches "Test Book One", "Second Book Test"
     }
+
+    @Test
+    fun testDefaultKioskItems_excludesObsoleteDonationAndCoffeeBoxItems() {
+        val items = dbHelper.getAllKioskItems()
+        assertEquals(16, items.size)
+        assertTrue(items.none { it.id == "item-17" || it.id == "item-18" })
+        assertTrue(items.none { it.name.contains("Spende", ignoreCase = true) || it.name.contains("Kaffee-Kasse", ignoreCase = true) })
+        assertTrue(items.none { it.category == ItemCategory.DONATIONS })
+    }
+
+    @Test
+    fun testSaveKioskItems_purgesObsoleteItems() {
+        // Manually insert legacy item into DB
+        val cv = android.content.ContentValues().apply {
+            put("id", "item-17")
+            put("name", "Spende (Bücher / Kiez)")
+            put("category", "DONATIONS")
+            put("price_cents", 200)
+            put("is_active", 1)
+        }
+        dbHelper.writableDatabase.insert("kiosk_items", null, cv)
+
+        // Ensure getAllKioskItems ignores it
+        val items = dbHelper.getAllKioskItems()
+        assertTrue(items.none { it.id == "item-17" })
+
+        // Save items and ensure obsolete item is purged completely from table
+        dbHelper.saveKioskItems(items)
+        val cursor = dbHelper.readableDatabase.rawQuery("SELECT COUNT(*) FROM kiosk_items WHERE id = 'item-17'", null)
+        cursor.use { c ->
+            c.moveToFirst()
+            assertEquals(0, c.getInt(0))
+        }
+    }
 }
+
