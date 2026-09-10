@@ -115,3 +115,12 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
 }
+
+android {
+    testOptions {
+        unitTests.all {
+            it.systemProperty("robolectric.dependency.repo.id", "gspot")
+            it.systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2/")
+        }
+    }
+}
