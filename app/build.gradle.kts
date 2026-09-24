@@ -22,6 +22,14 @@ android {
         ?: localProperties.getProperty("TEAM_API_KEY")
         ?: (System.getenv("TEAM_API_KEY") ?: "")
 
+    val keystorePassword = (project.findProperty("KEYSTORE_PASSWORD") as? String)
+        ?: localProperties.getProperty("KEYSTORE_PASSWORD")
+        ?: (System.getenv("KEYSTORE_PASSWORD") ?: "")
+
+    val keyPassword = (project.findProperty("KEY_PASSWORD") as? String)
+        ?: localProperties.getProperty("KEY_PASSWORD")
+        ?: (System.getenv("KEY_PASSWORD") ?: "")
+
     defaultConfig {
         applicationId = "org.sprachcafe.team"
         minSdk = 24
@@ -39,9 +47,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("../keystore/release.keystore")
-            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "sprachcafe2026"
+            storePassword = keystorePassword
             keyAlias = "sprachcafe-key"
-            keyPassword = System.getenv("KEY_PASSWORD") ?: "sprachcafe2026"
+            this.keyPassword = keyPassword
         }
     }
 
