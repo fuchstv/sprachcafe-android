@@ -35,8 +35,8 @@ jobs:
       - name: Build Release APK & App Bundle (AAB)
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'sprachcafe2026' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'sprachcafe2026' }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           TEAM_API_KEY: ${{ secrets.TEAM_API_KEY }}
         run: ./gradlew assembleRelease bundleRelease --no-daemon
 
