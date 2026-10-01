@@ -24,11 +24,11 @@ android {
 
     val keystorePassword = (project.findProperty("KEYSTORE_PASSWORD") as? String)
         ?: localProperties.getProperty("KEYSTORE_PASSWORD")
-        ?: (System.getenv("KEYSTORE_PASSWORD") ?: "")
+        ?: System.getenv("KEYSTORE_PASSWORD")
 
     val keyPassword = (project.findProperty("KEY_PASSWORD") as? String)
         ?: localProperties.getProperty("KEY_PASSWORD")
-        ?: (System.getenv("KEY_PASSWORD") ?: "")
+        ?: System.getenv("KEY_PASSWORD")
 
     defaultConfig {
         applicationId = "org.sprachcafe.team"
@@ -60,10 +60,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = if (file("../keystore/release.keystore").exists() && keystorePassword.isNotBlank() && keyPassword.isNotBlank()) {
-                signingConfigs.getByName("release")
+            val releaseKeystoreExists = file("../keystore/release.keystore").exists()
+            val hasKeystorePasswords = !keystorePassword.isNullOrBlank() && !keyPassword.isNullOrBlank()
+
+            if (releaseKeystoreExists && hasKeystorePasswords) {
+                signingConfig = signingConfigs.getByName("release")
             } else {
-                signingConfigs.getByName("debug")
+                signingConfig = signingConfigs.getByName("debug")
             }
         }
         debug {
