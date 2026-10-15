@@ -124,9 +124,11 @@ fun KioskScreen(
         else activeItems.filter { it.category == selectedCategory }
     }
 
-    val totalCents = remember(cart, itemsList) {
+    val itemsById = remember(itemsList) { itemsList.associateBy { it.id } }
+
+    val totalCents = remember(cart, itemsById) {
         cart.entries.sumOf { (id, qty) ->
-            (itemsList.find { it.id == id }?.priceCents ?: 0) * qty
+            (itemsById[id]?.priceCents ?: 0) * qty
         }
     }
     val totalItemsCount = remember(cart) { cart.values.sum() }
@@ -156,7 +158,7 @@ fun KioskScreen(
 
         // Record sale transaction
         val itemsSummary = cart.map { (id, qty) ->
-            val name = itemsList.find { it.id == id }?.name ?: id
+            val name = itemsById[id]?.name ?: id
             "$qty x $name"
         }.joinToString(", ")
 
@@ -785,7 +787,7 @@ fun KioskScreen(
                     }
 
                     cart.forEach { (id, qty) ->
-                        val item = itemsList.find { it.id == id }
+                        val item = itemsById[id]
                         if (item != null) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
